@@ -12,7 +12,8 @@ pub struct Params {
 }
 
 impl Params {
-    /// Generate g1, g2 and 1 h for each message
+    /// Generate g1, g2 and 1 h for each message. These are shared by all signers and users.
+    /// "Setup" from paper.
     pub fn new(msg_count: usize, label: &[u8]) -> Self {
         let g1 = SignatureGroup::from_msg_hash(&[label, " : g1".as_bytes()].concat());
         let g2 = OtherGroup::from_msg_hash(&[label, " : g2".as_bytes()].concat());
@@ -62,7 +63,8 @@ pub struct SignatureRequest {
 }
 
 impl Signature {
-    /// First `count_hidden` messages are hidden from signer and thus need to be encrypted using Elgamal
+    /// First `count_hidden` messages are hidden from signer and thus need to be encrypted using Elgamal.
+    /// "PrepareBlindSign" from paper.
     pub fn request(
         messages: &FieldElementVector,
         count_hidden: usize,
@@ -93,7 +95,6 @@ impl Signature {
         // commitment = h_1^m_1.h_2^m_2...h_count_hidden^m_count_hidden.g_1^r
         let commitment = bases.multi_scalar_mul_const_time(&exponents).unwrap();
 
-        // Probably don't need h but can use commitment straightaway
         let h = SignatureGroup::from_msg_hash(&commitment.to_bytes());
 
         // Each element of `ciphertexts` is the elgamal ciphertext and the randomness used during encryption.
@@ -121,11 +122,14 @@ impl Signature {
         }
     }
 
+    /// Signed creates a blinded signature. "BlindSign" from paper.
     pub fn new_blinded(
         sig_request: &SignatureRequest,
         sigkey: &Sigkey,
         params: &Params,
     ) -> BlindSignature {
+        // TODO: Verify proof of knowledge of various forms.
+
         let hidden_msg_count = sig_request.ciphertexts.len();
 
         assert_eq!(
@@ -133,7 +137,6 @@ impl Signature {
             sigkey.y.len()
         );
 
-        // Probably don't need h but can use commitment straightaway
         let h = SignatureGroup::from_msg_hash(&sig_request.commitment.to_bytes());
 
         // The blinded signature is (h, c_tilde).
@@ -176,6 +179,7 @@ impl Signature {
         }
     }
 
+    /// User unblinds the blinded signature received from a signer. "Unblind" from paper.
     pub fn new_unblinded(sig: BlindSignature, elgamal_sk: &FieldElement) -> Signature {
         let a_sk = &sig.blinded.0 * elgamal_sk;
         let sigma_2 = &sig.blinded.1 - &a_sk;
@@ -185,6 +189,7 @@ impl Signature {
         }
     }
 
+    /// Create an aggregated signature. "AggCred" from paper.
     pub fn aggregate(
         threshold: usize,
         sigs: Vec<(usize, Signature)>,
@@ -207,6 +212,7 @@ impl Signature {
         }
     }
 
+    /// Verify a signature. Can verify unblinded sig received from a signer and the aggregate sig as well.
     pub fn verify(&self, messages: &FieldElementVector, vk: &Verkey, params: &Params) -> bool {
         assert_eq!(messages.len(), vk.Y_tilde.len());
         if self.sigma_1.is_identity() || self.sigma_2.is_identity() {
@@ -225,6 +231,7 @@ impl Signature {
 }
 
 impl Verkey {
+    /// Create an aggregated verley.
     pub fn aggregate(threshold: usize, keys: Vec<(usize, &Verkey)>, params: &Params) -> Verkey {
         assert!(keys.len() >= threshold);
         let q = keys[0].1.Y_tilde.len();

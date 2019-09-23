@@ -1,10 +1,13 @@
-use crate::ps_sig::{Params, Sigkey, Verkey};
+use crate::signature::{Params, Sigkey, Verkey};
 use crate::sss::get_shared_secret;
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 
 /// Keygen done by trusted party using Shamir secret sharing. Creates signing and verification
 /// keys for each signer. The trusted party will know every signer's secret keys and the
 /// aggregate secret keys and can create signatures.
+/// Outputs 3 items, first 2 are shared secrets and should be destroyed.
+/// The last vector contains the keys, 1 item corresponding to each signer.
+/// "TTPKeyGen" from paper
 pub fn trusted_party_keygen(
     threshold: usize,
     total: usize,
