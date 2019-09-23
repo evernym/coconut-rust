@@ -1,0 +1,23 @@
+[package]
+name = "coconut_rust"
+version = "0.1.0"
+authors = ["lovesh <lovesh.bond@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rand = "0.6"
+failure = "0.1.5"
+serde = "1.0"
+serde_derive = "1.0"
+
+[dependencies.amcl_wrapper]
+version = "0.1.6"
+default-features = false
+features = ["bls381"]
+
+[features]
+default = ["G1G2"]
+G1G2 = []
+G2G1 = []
