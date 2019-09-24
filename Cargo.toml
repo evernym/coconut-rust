@@ -1,5 +1,5 @@
 [package]
-name = "coconut_rust"
+name = "coconut"
 version = "0.1.0"
 authors = ["lovesh <lovesh.bond@gmail.com>"]
 edition = "2018"

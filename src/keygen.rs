@@ -55,7 +55,7 @@ mod tests {
     use crate::sss::{reconstruct_secret, Polynomial};
     use crate::OtherGroupVec;
     use amcl_wrapper::group_elem::GroupElementVector;
-    use std::collections::BTreeMap;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn test_keygen() {
@@ -81,8 +81,8 @@ mod tests {
         let (secret_x, secret_y, keys) = trusted_party_keygen(threshold, total, &params);
 
         // Reconstruct secret key
-        let mut shares_x = BTreeMap::<usize, FieldElement>::new();
-        let mut shares_y = vec![BTreeMap::<usize, FieldElement>::new(); msg_count];
+        let mut shares_x = HashMap::<usize, FieldElement>::new();
+        let mut shares_y = vec![HashMap::<usize, FieldElement>::new(); msg_count];
         for i in 0..threshold {
             shares_x.insert(keys[i].0, keys[i].1.x.clone());
             for j in 0..msg_count {
@@ -104,8 +104,14 @@ mod tests {
         let mut recon_Y_tilde_bases = vec![OtherGroupVec::with_capacity(threshold); msg_count];
         let mut recon_Y_tilde_exps = vec![FieldElementVector::with_capacity(threshold); msg_count];
 
+        let signer_ids = keys
+            .iter()
+            .take(threshold)
+            .map(|(i, _, _)| *i)
+            .collect::<HashSet<usize>>();
+
         for (id, _, vk) in keys.into_iter().take(threshold) {
-            let l = Polynomial::lagrange_basis_at_0(threshold, id);
+            let l = Polynomial::lagrange_basis_at_0(signer_ids.clone(), id);
             recon_X_tilde_bases.push(vk.X_tilde.clone());
             recon_X_tilde_exps.push(l.clone());
 

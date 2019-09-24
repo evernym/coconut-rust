@@ -3,6 +3,8 @@ use crate::sss::Polynomial;
 use crate::{ate_2_pairing, OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
+use ps_sig::errors::PSError;
+use std::collections::HashSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Params {
@@ -44,9 +46,10 @@ pub struct Verkey {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Signature {
-    pub sigma_1: SignatureGroup,
-    pub sigma_2: SignatureGroup,
+pub struct SignatureRequest {
+    pub known_messages: FieldElementVector,
+    pub commitment: SignatureGroup,
+    pub ciphertexts: Vec<(SignatureGroup, SignatureGroup)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,21 +59,28 @@ pub struct BlindSignature {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SignatureRequest {
-    pub known_messages: FieldElementVector,
-    pub commitment: SignatureGroup,
-    pub ciphertexts: Vec<(SignatureGroup, SignatureGroup)>,
+pub struct Signature {
+    pub sigma_1: SignatureGroup,
+    pub sigma_2: SignatureGroup,
 }
 
-impl Signature {
+impl_PoK_VC!(
+    ProverCommittingSignatureGroup,
+    ProverCommittedSignatureGroup,
+    ProofSignatureGroup,
+    SignatureGroup,
+    SignatureGroupVec
+);
+
+impl SignatureRequest {
     /// First `count_hidden` messages are hidden from signer and thus need to be encrypted using Elgamal.
     /// "PrepareBlindSign" from paper.
-    pub fn request(
+    pub fn new(
         messages: &FieldElementVector,
         count_hidden: usize,
         elgamal_pubkey: &SignatureGroup,
         params: &Params,
-    ) -> SignatureRequest {
+    ) -> Self {
         // TODO: Accept blindings for each hidden message
         assert!(messages.len() >= count_hidden);
         assert_eq!(messages.len(), params.h.len());
@@ -106,7 +116,7 @@ impl Signature {
             .collect::<Vec<(SignatureGroup, SignatureGroup, FieldElement)>>();
 
         // TODO: Add proof of knowledge of various forms.
-        SignatureRequest {
+        Self {
             known_messages: messages
                 .iter()
                 .skip(count_hidden)
@@ -121,7 +131,9 @@ impl Signature {
                 .collect::<Vec<(SignatureGroup, SignatureGroup)>>(),
         }
     }
+}
 
+impl Signature {
     /// Signed creates a blinded signature. "BlindSign" from paper.
     pub fn new_blinded(
         sig_request: &SignatureRequest,
@@ -200,11 +212,17 @@ impl Signature {
         let mut s_exps = FieldElementVector::with_capacity(threshold);
         let sigma_1 = sigs[0].1.sigma_1.clone();
 
+        let signer_ids = sigs
+            .iter()
+            .take(threshold)
+            .map(|(i, _)| *i)
+            .collect::<HashSet<usize>>();
         for (id, sig) in sigs.into_iter().take(threshold) {
-            let l = Polynomial::lagrange_basis_at_0(threshold, id);
+            let l = Polynomial::lagrange_basis_at_0(signer_ids.clone(), id);
             s_bases.push(sig.sigma_2.clone());
             s_exps.push(l);
         }
+        // s = sigma_2[i]^l for all i
         let s = s_bases.multi_scalar_mul_const_time(&s_exps).unwrap();
         Signature {
             sigma_1,
@@ -224,14 +242,16 @@ impl Signature {
             Y_m_bases.push(vk.Y_tilde[i].clone());
             Y_m_exps.push(messages[i].clone());
         }
+        // Y_m = X_tilde * Y_tilde[1]^m_1 * Y_tilde[2]^m_2 * ...Y_tilde[i]^m_i
         let Y_m = &vk.X_tilde + &(Y_m_bases.multi_scalar_mul_var_time(&Y_m_exps).unwrap());
+        // e(sigma_1, Y_m) == e(sigma_2, g2) => e(sigma_1, Y_m) * e(-sigma_2, g2) == 1
         let e = ate_2_pairing(&self.sigma_1, &Y_m, &(self.sigma_2.negation()), &params.g2);
         e.is_one()
     }
 }
 
 impl Verkey {
-    /// Create an aggregated verley.
+    /// Create an aggregated verkey.
     pub fn aggregate(threshold: usize, keys: Vec<(usize, &Verkey)>, params: &Params) -> Verkey {
         assert!(keys.len() >= threshold);
         let q = keys[0].1.Y_tilde.len();
@@ -242,12 +262,16 @@ impl Verkey {
         let mut X_tilde_bases = OtherGroupVec::with_capacity(threshold);
         let mut X_tilde_exps = FieldElementVector::with_capacity(threshold);
 
-        //let mut Y_tilde_bases = Vec::<OtherGroupVec>::with_capacity(q);
         let mut Y_tilde_bases = vec![OtherGroupVec::with_capacity(threshold); q];
         let mut Y_tilde_exps = vec![FieldElementVector::with_capacity(threshold); q];
 
+        let signer_ids = keys
+            .iter()
+            .take(threshold)
+            .map(|(i, _)| *i)
+            .collect::<HashSet<usize>>();
         for (id, vk) in keys.into_iter().take(threshold) {
-            let l = Polynomial::lagrange_basis_at_0(threshold, id);
+            let l = Polynomial::lagrange_basis_at_0(signer_ids.clone(), id);
             X_tilde_bases.push(vk.X_tilde.clone());
             X_tilde_exps.push(l.clone());
             for j in 0..q {
@@ -256,9 +280,12 @@ impl Verkey {
             }
         }
 
+        // X_tilde = X_tilde_1^l_1 * X_tilde_2^l_2 * ... X_tilde_i^l_i for i in threshold
         let X_tilde = X_tilde_bases
             .multi_scalar_mul_var_time(&X_tilde_exps)
             .unwrap();
+
+        // Y_tilde = [Y_tilde_1^l_1 * Y_tilde_2^l_2 * ... Y_tilde_i^l_i for i in threshold, .. for all q]
         let mut Y_tilde = vec![];
         for i in 0..q {
             Y_tilde.push(
@@ -287,6 +314,7 @@ mod tests {
         let aggr_vk = Verkey::aggregate(
             threshold,
             keys.iter()
+                .take(threshold)
                 .map(|k| (k.0, &k.2))
                 .collect::<Vec<(usize, &Verkey)>>(),
             &params,
@@ -313,7 +341,7 @@ mod tests {
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
 
-        let sig_req = Signature::request(&msgs, count_hidden, &elg_pk, &params);
+        let sig_req = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
 
         let mut blinded_sigs = vec![];
         for i in 0..threshold {
@@ -336,6 +364,78 @@ mod tests {
                 .collect::<Vec<(usize, &Verkey)>>(),
             &params,
         );
+
+        assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
+    }
+
+    #[test]
+    fn test_verkey_aggregation_gaps_in_ids() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 7;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (secret_x, secret_y, keys) = trusted_party_keygen(threshold, total, &params);
+
+        let mut keys_to_aggr = vec![];
+        keys_to_aggr.push(((keys[0].0, &keys[0].2)));
+        keys_to_aggr.push(((keys[2].0, &keys[2].2)));
+        keys_to_aggr.push(((keys[4].0, &keys[4].2)));
+
+        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr, &params);
+
+        let expected_X_tilde = &params.g2 * &secret_x;
+        assert_eq!(expected_X_tilde, aggr_vk.X_tilde);
+
+        for i in 0..msg_count {
+            let expected_Y_tilde_i = &params.g2 * &secret_y[i];
+            assert_eq!(expected_Y_tilde_i, aggr_vk.Y_tilde[i]);
+        }
+    }
+
+    #[test]
+    fn test_sign_verify_1() {
+        // Request signature from 1 threshold group of signers and form aggregate verkey from
+        // different threshold group of signers.
+        let threshold = 3;
+        let total = 6;
+        let msg_count = 6;
+        let count_hidden = 2;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (_, _, keys) = trusted_party_keygen(threshold, total, &params);
+
+        let msgs = FieldElementVector::random(msg_count);
+        let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
+
+        let sig_req = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
+
+        // Signers from which signature will be requested.
+        let mut signer_ids = HashSet::new();
+        signer_ids.insert(1);
+        signer_ids.insert(3);
+        signer_ids.insert(5);
+
+        let mut blinded_sigs = vec![];
+        for i in &signer_ids {
+            // Keys at index i have id i+1
+            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[*i - 1].1, &params));
+        }
+
+        let mut unblinded_sigs = vec![];
+        for i in &signer_ids {
+            let unblinded_sig = Signature::new_unblinded(blinded_sigs.remove(0), &elg_sk);
+            // Keys at index i have id i+1
+            assert!(unblinded_sig.verify(&msgs, &keys[*i - 1].2, &params));
+            unblinded_sigs.push((keys[*i - 1].0, unblinded_sig));
+        }
+
+        let aggr_sig = Signature::aggregate(threshold, unblinded_sigs, &params);
+
+        let mut keys_to_aggr = vec![];
+        keys_to_aggr.push(((keys[1].0, &keys[1].2)));
+        keys_to_aggr.push(((keys[3].0, &keys[3].2)));
+        keys_to_aggr.push(((keys[5].0, &keys[5].2)));
+
+        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr, &params);
 
         assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
     }

@@ -30,6 +30,7 @@ pub fn transform_to_PS_sig(sig: &Signature) -> PSSignature {
 mod tests {
     use super::*;
     use crate::keygen::trusted_party_keygen;
+    use crate::signature::SignatureRequest;
     use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
     use std::collections::{HashMap, HashSet};
 
@@ -46,7 +47,7 @@ mod tests {
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
 
-        let sig_req = Signature::request(&msgs, count_hidden, &elg_pk, &params);
+        let sig_req = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
 
         let mut blinded_sigs = vec![];
         for i in 0..threshold {
