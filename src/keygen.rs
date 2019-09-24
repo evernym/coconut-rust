@@ -20,7 +20,7 @@ pub fn trusted_party_keygen(
     let (secret_x, mut x) = get_shared_secret(threshold, total);
     let mut y = vec![];
     let mut secret_y = FieldElementVector::with_capacity(params.msg_count());
-    for i in 0..params.msg_count() {
+    for _ in 0..params.msg_count() {
         let (sec_y, b) = get_shared_secret(threshold, total);
         secret_y.push(sec_y);
         y.push(b);

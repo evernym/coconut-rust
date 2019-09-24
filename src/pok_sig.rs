@@ -30,7 +30,7 @@ pub fn transform_to_PS_sig(sig: &Signature) -> PSSignature {
 mod tests {
     use super::*;
     use crate::keygen::trusted_party_keygen;
-    use crate::signature::SignatureRequest;
+    use crate::signature::{SignatureRequest, SignatureRequestPoK};
     use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
     use std::collections::{HashMap, HashSet};
 
@@ -47,11 +47,32 @@ mod tests {
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
 
-        let sig_req = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
+        let (sig_req, randomness) = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
+
+        // Initiate proof of knowledge of various items of Signature request
+        let sig_req_pok = SignatureRequestPoK::init(&sig_req, &elg_pk, &params);
+
+        // The challenge can include other things also (if proving other predicates)
+        let challenge = FieldElement::from_msg_hash(&sig_req_pok.to_bytes());
+
+        // Create proof once the challenge is finalized
+        let hidden_msgs: FieldElementVector = msgs
+            .iter()
+            .take(count_hidden)
+            .map(|m| m.clone())
+            .collect::<Vec<FieldElement>>()
+            .into();
+        let sig_req_proof = sig_req_pok
+            .gen_proof(&hidden_msgs, randomness, &elg_sk, &challenge)
+            .unwrap();
 
         let mut blinded_sigs = vec![];
         for i in 0..threshold {
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[i].1, &params));
+            // Each signer verifier proof of knowledge of items of signature request before signing
+            assert!(sig_req_proof
+                .verify(&sig_req, &elg_pk, &challenge, &params)
+                .unwrap());
+            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[i].1));
         }
 
         let mut unblinded_sigs = vec![];
@@ -60,14 +81,13 @@ mod tests {
             unblinded_sigs.push((keys[i].0, unblinded_sig));
         }
 
-        let aggr_sig = Signature::aggregate(threshold, unblinded_sigs, &params);
+        let aggr_sig = Signature::aggregate(threshold, unblinded_sigs);
 
         let aggr_vk = Verkey::aggregate(
             threshold,
             keys.iter()
                 .map(|k| (k.0, &k.2))
                 .collect::<Vec<(usize, &Verkey)>>(),
-            &params,
         );
 
         assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));

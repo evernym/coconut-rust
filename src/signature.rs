@@ -72,6 +72,20 @@ impl_PoK_VC!(
     SignatureGroupVec
 );
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SignatureRequestPoK {
+    pub pok_vc_elgamal_sk: ProverCommittedSignatureGroup,
+    pub pok_vc_commitment: ProverCommittedSignatureGroup,
+    pub pok_vc_ciphertext: Vec<(ProverCommittedSignatureGroup, ProverCommittedSignatureGroup)>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SignatureRequestProof {
+    pub proof_elgamal_sk: ProofSignatureGroup,
+    pub proof_commitment: ProofSignatureGroup,
+    pub proof_ciphertexts: Vec<(ProofSignatureGroup, ProofSignatureGroup)>,
+}
+
 impl SignatureRequest {
     /// First `count_hidden` messages are hidden from signer and thus need to be encrypted using Elgamal.
     /// "PrepareBlindSign" from paper.
@@ -80,10 +94,12 @@ impl SignatureRequest {
         count_hidden: usize,
         elgamal_pubkey: &SignatureGroup,
         params: &Params,
-    ) -> Self {
-        // TODO: Accept blindings for each hidden message
+    ) -> (Self, FieldElementVector) {
         assert!(messages.len() >= count_hidden);
         assert_eq!(messages.len(), params.h.len());
+
+        // Randomness for commitment and ciphertexts. Used to prove knowleddge later on
+        let mut randomness = FieldElementVector::with_capacity(count_hidden + 1);
 
         // Commit to the hidden messages
         let mut bases: SignatureGroupVec = params
@@ -101,9 +117,11 @@ impl SignatureRequest {
             .collect::<Vec<FieldElement>>()
             .into();
         let r = FieldElement::random();
-        exponents.push(r);
+        exponents.push(r.clone());
         // commitment = h_1^m_1.h_2^m_2...h_count_hidden^m_count_hidden.g_1^r
         let commitment = bases.multi_scalar_mul_const_time(&exponents).unwrap();
+
+        randomness.push(r);
 
         let h = SignatureGroup::from_msg_hash(&commitment.to_bytes());
 
@@ -112,36 +130,169 @@ impl SignatureRequest {
         let ciphertexts = messages
             .iter()
             .take(count_hidden)
-            .map(|m| elgamal_encrypt!(&params.g1, elgamal_pubkey, &(&h * m)))
-            .collect::<Vec<(SignatureGroup, SignatureGroup, FieldElement)>>();
+            .map(|m| {
+                let (c1, c2, k) = elgamal_encrypt!(&params.g1, elgamal_pubkey, &(&h * m));
+                randomness.push(k);
+                (c1, c2)
+            })
+            .collect::<Vec<(SignatureGroup, SignatureGroup)>>();
 
-        // TODO: Add proof of knowledge of various forms.
-        Self {
-            known_messages: messages
-                .iter()
-                .skip(count_hidden)
-                .map(|f| f.clone())
-                .collect::<Vec<FieldElement>>()
-                .into(),
-            commitment,
-            // Don't output the randomness
-            ciphertexts: ciphertexts
-                .into_iter()
-                .map(|c| (c.0, c.1))
-                .collect::<Vec<(SignatureGroup, SignatureGroup)>>(),
+        (
+            Self {
+                known_messages: messages
+                    .iter()
+                    .skip(count_hidden)
+                    .map(|f| f.clone())
+                    .collect::<Vec<FieldElement>>()
+                    .into(),
+                commitment,
+                ciphertexts,
+            },
+            randomness,
+        )
+    }
+}
+
+impl SignatureRequestPoK {
+    // Proof of knowledge using Schnorr protocol. There are multiple proof of knowledge protocols being done.
+    // 1 for knowledge of Elgamal secret key, 1 for knowledge of hidden messages and randomness in the
+    // commitment and 2 for each ciphertext. The protocol is broken down in 2 steps, pre-challenge and post challenge
+    // so that it can be used in combination with other protocols
+    // XXX Optimization idea: Since there are multiple Schnorr protocol executions resulting in a linear cost,
+    // the inner product argument protocol from Bulletproofs can be used to make the cost logarithmic.
+    pub fn init(
+        sig_req: &SignatureRequest,
+        elgamal_pk: &SignatureGroup,
+        params: &Params,
+    ) -> SignatureRequestPoK {
+        // For knowledge of Elgamal secret key
+        let mut committing_elgamal_sk = ProverCommittingSignatureGroup::new();
+        committing_elgamal_sk.commit(&params.g1, None);
+        let committed_elgamal_sk = committing_elgamal_sk.finish();
+
+        // For knowledge of hidden messages and randomness in the commitment
+        let mut committing_comm = ProverCommittingSignatureGroup::new();
+        for h in params.h.iter().take(sig_req.ciphertexts.len()) {
+            committing_comm.commit(h, None);
         }
+        // For randomness
+        committing_comm.commit(&params.g1, None);
+        let committed_comm = committing_comm.finish();
+
+        // XXX: This computation can be avoided if h is persisted from `new`
+        let h = SignatureGroup::from_msg_hash(&sig_req.commitment.to_bytes());
+
+        let mut ciphertext_commts = vec![];
+        for _ in 0..sig_req.ciphertexts.len() {
+            let mut committing_1 = ProverCommittingSignatureGroup::new();
+            committing_1.commit(&params.g1, None);
+
+            let mut committing_2 = ProverCommittingSignatureGroup::new();
+            committing_2.commit(elgamal_pk, None);
+            committing_2.commit(&h, None);
+            ciphertext_commts.push((committing_1.finish(), committing_2.finish()));
+        }
+
+        SignatureRequestPoK {
+            pok_vc_elgamal_sk: committed_elgamal_sk,
+            pok_vc_commitment: committed_comm,
+            pok_vc_ciphertext: ciphertext_commts,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.append(&mut self.pok_vc_elgamal_sk.to_bytes());
+        bytes.append(&mut self.pok_vc_commitment.to_bytes());
+        for (pok_vc_1, pok_vc_2) in &self.pok_vc_ciphertext {
+            bytes.append(&mut pok_vc_1.to_bytes());
+            bytes.append(&mut pok_vc_2.to_bytes());
+        }
+        bytes
+    }
+
+    pub fn gen_proof(
+        self,
+        hidden_messages: &FieldElementVector,
+        randomness: FieldElementVector,
+        elgamal_sk: &FieldElement,
+        challenge: &FieldElement,
+    ) -> Result<SignatureRequestProof, CoconutError> {
+        let proof_elgamal_sk = self
+            .pok_vc_elgamal_sk
+            .gen_proof(challenge, &[elgamal_sk.clone()])?;
+        let mut secrets_commitment = vec![];
+        for i in 0..hidden_messages.len() {
+            secrets_commitment.push(hidden_messages[i].clone());
+        }
+        secrets_commitment.push(randomness[0].clone());
+        let proof_commitment = self
+            .pok_vc_commitment
+            .gen_proof(challenge, &secrets_commitment)?;
+        let mut proof_ciphertexts = vec![];
+        for (i, (pok_vc_1, pok_vc_2)) in self.pok_vc_ciphertext.into_iter().enumerate() {
+            let proof_1 = pok_vc_1.gen_proof(challenge, &[randomness[i + 1].clone()])?;
+            let proof_2 = pok_vc_2.gen_proof(
+                challenge,
+                &[randomness[i + 1].clone(), hidden_messages[i].clone()],
+            )?;
+            proof_ciphertexts.push((proof_1, proof_2));
+        }
+        Ok(SignatureRequestProof {
+            proof_elgamal_sk,
+            proof_commitment,
+            proof_ciphertexts,
+        })
+    }
+}
+
+impl SignatureRequestProof {
+    pub fn verify(
+        &self,
+        sig_req: &SignatureRequest,
+        elgamal_pk: &SignatureGroup,
+        challenge: &FieldElement,
+        params: &Params,
+    ) -> Result<bool, CoconutError> {
+        if !self
+            .proof_elgamal_sk
+            .verify(&[params.g1.clone()], elgamal_pk, challenge)?
+        {
+            return Ok(false);
+        }
+
+        let mut bases = params
+            .h
+            .iter()
+            .take(sig_req.ciphertexts.len())
+            .map(|h| h.clone())
+            .collect::<Vec<SignatureGroup>>();
+        bases.push(params.g1.clone());
+        if !self
+            .proof_commitment
+            .verify(&bases, &sig_req.commitment, challenge)?
+        {
+            return Ok(false);
+        }
+
+        // XXX: This computation can be avoided if h is persisted`
+        let h = SignatureGroup::from_msg_hash(&sig_req.commitment.to_bytes());
+        let bases = vec![elgamal_pk.clone(), h];
+        for (i, (proof_1, proof_2)) in self.proof_ciphertexts.iter().enumerate() {
+            if !proof_1.verify(&[params.g1.clone()], &sig_req.ciphertexts[i].0, challenge)? {
+                return Ok(false);
+            }
+            if !proof_2.verify(&bases, &sig_req.ciphertexts[i].1, challenge)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
 impl Signature {
     /// Signed creates a blinded signature. "BlindSign" from paper.
-    pub fn new_blinded(
-        sig_request: &SignatureRequest,
-        sigkey: &Sigkey,
-        params: &Params,
-    ) -> BlindSignature {
-        // TODO: Verify proof of knowledge of various forms.
-
+    pub fn new_blinded(sig_request: &SignatureRequest, sigkey: &Sigkey) -> BlindSignature {
         let hidden_msg_count = sig_request.ciphertexts.len();
 
         assert_eq!(
@@ -202,11 +353,7 @@ impl Signature {
     }
 
     /// Create an aggregated signature. "AggCred" from paper.
-    pub fn aggregate(
-        threshold: usize,
-        sigs: Vec<(usize, Signature)>,
-        params: &Params,
-    ) -> Signature {
+    pub fn aggregate(threshold: usize, sigs: Vec<(usize, Signature)>) -> Signature {
         assert!(sigs.len() >= threshold);
         let mut s_bases = SignatureGroupVec::with_capacity(threshold);
         let mut s_exps = FieldElementVector::with_capacity(threshold);
@@ -252,7 +399,7 @@ impl Signature {
 
 impl Verkey {
     /// Create an aggregated verkey.
-    pub fn aggregate(threshold: usize, keys: Vec<(usize, &Verkey)>, params: &Params) -> Verkey {
+    pub fn aggregate(threshold: usize, keys: Vec<(usize, &Verkey)>) -> Verkey {
         assert!(keys.len() >= threshold);
         let q = keys[0].1.Y_tilde.len();
         for i in 1..keys.len() {
@@ -317,7 +464,6 @@ mod tests {
                 .take(threshold)
                 .map(|k| (k.0, &k.2))
                 .collect::<Vec<(usize, &Verkey)>>(),
-            &params,
         );
 
         let expected_X_tilde = &params.g2 * &secret_x;
@@ -341,11 +487,32 @@ mod tests {
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
 
-        let sig_req = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
+        let (sig_req, randomness) = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
+
+        // Initiate proof of knowledge of various items of Signature request
+        let sig_req_pok = SignatureRequestPoK::init(&sig_req, &elg_pk, &params);
+
+        // The challenge can include other things also (if proving other predicates)
+        let challenge = FieldElement::from_msg_hash(&sig_req_pok.to_bytes());
+
+        // Create proof once the challenge is finalized
+        let hidden_msgs: FieldElementVector = msgs
+            .iter()
+            .take(count_hidden)
+            .map(|m| m.clone())
+            .collect::<Vec<FieldElement>>()
+            .into();
+        let sig_req_proof = sig_req_pok
+            .gen_proof(&hidden_msgs, randomness, &elg_sk, &challenge)
+            .unwrap();
 
         let mut blinded_sigs = vec![];
         for i in 0..threshold {
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[i].1, &params));
+            // Each signer verifier proof of knowledge of items of signature request before signing
+            assert!(sig_req_proof
+                .verify(&sig_req, &elg_pk, &challenge, &params)
+                .unwrap());
+            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[i].1));
         }
 
         let mut unblinded_sigs = vec![];
@@ -355,14 +522,13 @@ mod tests {
             unblinded_sigs.push((keys[i].0, unblinded_sig));
         }
 
-        let aggr_sig = Signature::aggregate(threshold, unblinded_sigs, &params);
+        let aggr_sig = Signature::aggregate(threshold, unblinded_sigs);
 
         let aggr_vk = Verkey::aggregate(
             threshold,
             keys.iter()
                 .map(|k| (k.0, &k.2))
                 .collect::<Vec<(usize, &Verkey)>>(),
-            &params,
         );
 
         assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
@@ -381,7 +547,7 @@ mod tests {
         keys_to_aggr.push(((keys[2].0, &keys[2].2)));
         keys_to_aggr.push(((keys[4].0, &keys[4].2)));
 
-        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr, &params);
+        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 
         let expected_X_tilde = &params.g2 * &secret_x;
         assert_eq!(expected_X_tilde, aggr_vk.X_tilde);
@@ -406,7 +572,7 @@ mod tests {
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
 
-        let sig_req = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
+        let (sig_req, randomness) = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
 
         // Signers from which signature will be requested.
         let mut signer_ids = HashSet::new();
@@ -414,10 +580,25 @@ mod tests {
         signer_ids.insert(3);
         signer_ids.insert(5);
 
+        let sig_req_pok = SignatureRequestPoK::init(&sig_req, &elg_pk, &params);
+        let challenge = FieldElement::from_msg_hash(&sig_req_pok.to_bytes());
+        let hidden_msgs: FieldElementVector = msgs
+            .iter()
+            .take(count_hidden)
+            .map(|m| m.clone())
+            .collect::<Vec<FieldElement>>()
+            .into();
+        let sig_req_proof = sig_req_pok
+            .gen_proof(&hidden_msgs, randomness, &elg_sk, &challenge)
+            .unwrap();
+
         let mut blinded_sigs = vec![];
         for i in &signer_ids {
+            assert!(sig_req_proof
+                .verify(&sig_req, &elg_pk, &challenge, &params)
+                .unwrap());
             // Keys at index i have id i+1
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[*i - 1].1, &params));
+            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[*i - 1].1));
         }
 
         let mut unblinded_sigs = vec![];
@@ -428,14 +609,14 @@ mod tests {
             unblinded_sigs.push((keys[*i - 1].0, unblinded_sig));
         }
 
-        let aggr_sig = Signature::aggregate(threshold, unblinded_sigs, &params);
+        let aggr_sig = Signature::aggregate(threshold, unblinded_sigs);
 
         let mut keys_to_aggr = vec![];
         keys_to_aggr.push(((keys[1].0, &keys[1].2)));
         keys_to_aggr.push(((keys[3].0, &keys[3].2)));
         keys_to_aggr.push(((keys[5].0, &keys[5].2)));
 
-        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr, &params);
+        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 
         assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
     }
