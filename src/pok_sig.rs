@@ -4,7 +4,6 @@ use crate::signature::{Params, Signature, Verkey};
 use crate::{OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::group_elem::GroupElement;
 use ps_sig::keys::Verkey as PSVerkey;
-use ps_sig::pok_sig::PoKOfSignature;
 use ps_sig::signature::Signature as PSSignature;
 
 // Transform the verkey to Verkey struct of ps_sig crate so that it can be used in the proof of knowledge protocol (PoKOfSignature).
@@ -32,11 +31,12 @@ mod tests {
     use crate::keygen::trusted_party_keygen;
     use crate::signature::{SignatureRequest, SignatureRequestPoK};
     use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
+    use ps_sig::pok_sig::PoKOfSignature;
     use std::collections::{HashMap, HashSet};
 
     #[test]
     fn test_PoK_sig() {
-        // Test proof of knowledge of signature
+        // Test proof of knowledge of signature and reveal some of the messages
         let threshold = 3;
         let total = 5;
         let msg_count = 6;
@@ -46,7 +46,6 @@ mod tests {
 
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
-
         let (sig_req, randomness) = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
 
         // Initiate proof of knowledge of various items of Signature request
@@ -95,11 +94,29 @@ mod tests {
         let ps_verkey = transform_to_PS_verkey(&aggr_vk, &params);
         let ps_sig = transform_to_PS_sig(&aggr_sig);
 
-        let pok =
-            PoKOfSignature::init(&ps_sig, &ps_verkey, msgs.as_slice(), HashSet::new()).unwrap();
+        // Reveal the following messages to the verifier
+        let mut revealed_msg_indices = HashSet::new();
+        revealed_msg_indices.insert(3);
+        revealed_msg_indices.insert(5);
+
+        let pok = PoKOfSignature::init(
+            &ps_sig,
+            &ps_verkey,
+            msgs.as_slice(),
+            revealed_msg_indices.clone(),
+        )
+        .unwrap();
         let chal = FieldElement::from_msg_hash(&pok.to_bytes());
         let proof = pok.gen_proof(&chal).unwrap();
 
-        assert!(proof.verify(&ps_verkey, HashMap::new(), &chal).unwrap());
+        // The prover reveals these messages
+        let mut revealed_msgs = HashMap::new();
+        for i in &revealed_msg_indices {
+            revealed_msgs.insert(i.clone(), msgs[*i].clone());
+        }
+
+        assert!(proof
+            .verify(&ps_verkey, revealed_msgs.clone(), &chal)
+            .unwrap());
     }
 }

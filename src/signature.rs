@@ -165,6 +165,11 @@ impl SignatureRequestPoK {
         elgamal_pk: &SignatureGroup,
         params: &Params,
     ) -> SignatureRequestPoK {
+        assert_eq!(
+            sig_req.known_messages.len() + sig_req.ciphertexts.len(),
+            params.h.len()
+        );
+
         // For knowledge of Elgamal secret key
         let mut committing_elgamal_sk = ProverCommittingSignatureGroup::new();
         committing_elgamal_sk.commit(&params.g1, None);
@@ -218,6 +223,9 @@ impl SignatureRequestPoK {
         elgamal_sk: &FieldElement,
         challenge: &FieldElement,
     ) -> Result<SignatureRequestProof, CoconutError> {
+        assert_eq!(self.pok_vc_ciphertext.len(), hidden_messages.len());
+        assert_eq!(self.pok_vc_ciphertext.len(), randomness.len() - 1);
+
         let proof_elgamal_sk = self
             .pok_vc_elgamal_sk
             .gen_proof(challenge, &[elgamal_sk.clone()])?;
@@ -543,9 +551,9 @@ mod tests {
         let (secret_x, secret_y, keys) = trusted_party_keygen(threshold, total, &params);
 
         let mut keys_to_aggr = vec![];
-        keys_to_aggr.push(((keys[0].0, &keys[0].2)));
-        keys_to_aggr.push(((keys[2].0, &keys[2].2)));
-        keys_to_aggr.push(((keys[4].0, &keys[4].2)));
+        keys_to_aggr.push((keys[0].0, &keys[0].2));
+        keys_to_aggr.push((keys[2].0, &keys[2].2));
+        keys_to_aggr.push((keys[4].0, &keys[4].2));
 
         let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 
@@ -612,9 +620,9 @@ mod tests {
         let aggr_sig = Signature::aggregate(threshold, unblinded_sigs);
 
         let mut keys_to_aggr = vec![];
-        keys_to_aggr.push(((keys[1].0, &keys[1].2)));
-        keys_to_aggr.push(((keys[3].0, &keys[3].2)));
-        keys_to_aggr.push(((keys[5].0, &keys[5].2)));
+        keys_to_aggr.push((keys[1].0, &keys[1].2));
+        keys_to_aggr.push((keys[3].0, &keys[3].2));
+        keys_to_aggr.push((keys[5].0, &keys[5].2));
 
         let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 

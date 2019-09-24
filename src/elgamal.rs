@@ -29,7 +29,6 @@ macro_rules! elgamal_decrypt {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use amcl_wrapper::field_elem::FieldElement;
     use amcl_wrapper::group_elem::GroupElement;
     use amcl_wrapper::group_elem_g1::G1;
