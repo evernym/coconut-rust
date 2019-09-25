@@ -177,8 +177,12 @@ impl SignatureRequestPoK {
 
         // For knowledge of hidden messages and randomness in the commitment
         let mut committing_comm = ProverCommittingSignatureGroup::new();
+        // Since the hidden messages are same inside this commitment and ciphertexts, same blinding needs to be used.
+        let mut hidden_msg_blindings = vec![];
         for h in params.h.iter().take(sig_req.ciphertexts.len()) {
-            committing_comm.commit(h, None);
+            let b = FieldElement::random();
+            committing_comm.commit(h, Some(&b));
+            hidden_msg_blindings.push(b);
         }
         // For randomness
         committing_comm.commit(&params.g1, None);
@@ -188,13 +192,14 @@ impl SignatureRequestPoK {
         let h = SignatureGroup::from_msg_hash(&sig_req.commitment.to_bytes());
 
         let mut ciphertext_commts = vec![];
-        for _ in 0..sig_req.ciphertexts.len() {
+        for i in 0..sig_req.ciphertexts.len() {
             let mut committing_1 = ProverCommittingSignatureGroup::new();
             committing_1.commit(&params.g1, None);
 
             let mut committing_2 = ProverCommittingSignatureGroup::new();
             committing_2.commit(elgamal_pk, None);
-            committing_2.commit(&h, None);
+            // Use the same blinding for the hidden message used in the commitment
+            committing_2.commit(&h, Some(&hidden_msg_blindings[i]));
             ciphertext_commts.push((committing_1.finish(), committing_2.finish()));
         }
 
@@ -226,9 +231,11 @@ impl SignatureRequestPoK {
         assert_eq!(self.pok_vc_ciphertext.len(), hidden_messages.len());
         assert_eq!(self.pok_vc_ciphertext.len(), randomness.len() - 1);
 
+        // Proof of knowledge of Elgamal secret key.
         let proof_elgamal_sk = self
             .pok_vc_elgamal_sk
             .gen_proof(challenge, &[elgamal_sk.clone()])?;
+
         let mut secrets_commitment = vec![];
         for i in 0..hidden_messages.len() {
             secrets_commitment.push(hidden_messages[i].clone());
@@ -237,6 +244,7 @@ impl SignatureRequestPoK {
         let proof_commitment = self
             .pok_vc_commitment
             .gen_proof(challenge, &secrets_commitment)?;
+
         let mut proof_ciphertexts = vec![];
         for (i, (pok_vc_1, pok_vc_2)) in self.pok_vc_ciphertext.into_iter().enumerate() {
             let proof_1 = pok_vc_1.gen_proof(challenge, &[randomness[i + 1].clone()])?;
@@ -262,6 +270,10 @@ impl SignatureRequestProof {
         challenge: &FieldElement,
         params: &Params,
     ) -> Result<bool, CoconutError> {
+        assert_eq!(self.proof_ciphertexts.len(), sig_req.ciphertexts.len());
+        assert_eq!(self.proof_commitment.responses.len(), self.proof_ciphertexts.len()+1);
+
+        // Verify proof of knowledge of Elgamal secret key
         if !self
             .proof_elgamal_sk
             .verify(&[params.g1.clone()], elgamal_pk, challenge)?
@@ -269,6 +281,7 @@ impl SignatureRequestProof {
             return Ok(false);
         }
 
+        // Verify proof of knowledge of hidden messages in the commitment
         let mut bases = params
             .h
             .iter()
@@ -287,6 +300,11 @@ impl SignatureRequestProof {
         let h = SignatureGroup::from_msg_hash(&sig_req.commitment.to_bytes());
         let bases = vec![elgamal_pk.clone(), h];
         for (i, (proof_1, proof_2)) in self.proof_ciphertexts.iter().enumerate() {
+            // The response for the hidden message should be same as that in the commitment.
+            if proof_2.responses[1] != self.proof_commitment.responses[i] {
+                return Ok(false);
+            }
+
             if !proof_1.verify(&[params.g1.clone()], &sig_req.ciphertexts[i].0, challenge)? {
                 return Ok(false);
             }

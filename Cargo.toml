@@ -18,7 +18,7 @@ default-features = false
 features = ["bls381"]
 
 [dependencies.ps_sig]
-version = "0.1.0"
+version = "0.1.1"
 
 [features]
 default = ["G1G2"]
