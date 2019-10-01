@@ -28,7 +28,7 @@ pub fn transform_to_PS_sig(sig: &Signature) -> PSSignature {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keygen::trusted_party_keygen;
+    use crate::keygen::trusted_party_SSS_keygen;
     use crate::signature::{SignatureRequest, SignatureRequestPoK};
     use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
     use ps_sig::pok_sig::PoKOfSignature;
@@ -42,7 +42,7 @@ mod tests {
         let msg_count = 6;
         let count_hidden = 2;
         let params = Params::new(msg_count, "test".as_bytes());
-        let (_, _, keys) = trusted_party_keygen(threshold, total, &params);
+        let (_, _, signers) = trusted_party_SSS_keygen(threshold, total, &params);
 
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
@@ -71,21 +71,22 @@ mod tests {
             assert!(sig_req_proof
                 .verify(&sig_req, &elg_pk, &challenge, &params)
                 .unwrap());
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[i].1));
+            blinded_sigs.push(Signature::new_blinded(&sig_req, &signers[i].sigkey));
         }
 
         let mut unblinded_sigs = vec![];
         for i in 0..threshold {
             let unblinded_sig = Signature::new_unblinded(blinded_sigs[i].clone(), &elg_sk);
-            unblinded_sigs.push((keys[i].0, unblinded_sig));
+            unblinded_sigs.push((signers[i].id, unblinded_sig));
         }
 
         let aggr_sig = Signature::aggregate(threshold, unblinded_sigs);
 
         let aggr_vk = Verkey::aggregate(
             threshold,
-            keys.iter()
-                .map(|k| (k.0, &k.2))
+            signers
+                .iter()
+                .map(|s| (s.id, &s.verkey))
                 .collect::<Vec<(usize, &Verkey)>>(),
         );
 

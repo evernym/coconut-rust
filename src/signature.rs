@@ -1,5 +1,5 @@
 use crate::errors::CoconutError;
-use crate::sss::Polynomial;
+use crate::secret_sharing::Polynomial;
 use crate::{ate_2_pairing, OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
@@ -495,21 +495,23 @@ impl Verkey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keygen::trusted_party_keygen;
+    use crate::keygen::{trusted_party_PVSS_keygen, trusted_party_SSS_keygen, Signer};
+    use crate::secret_sharing::PedersenVSS_gens;
 
-    #[test]
-    fn test_verkey_aggregation() {
-        let threshold = 3;
-        let total = 5;
-        let msg_count = 7;
-        let params = Params::new(msg_count, "test".as_bytes());
-        let (secret_x, secret_y, keys) = trusted_party_keygen(threshold, total, &params);
-
+    fn check_key_aggregation(
+        threshold: usize,
+        msg_count: usize,
+        secret_x: FieldElement,
+        secret_y: FieldElementVector,
+        signers: &[Signer],
+        params: &Params,
+    ) {
         let aggr_vk = Verkey::aggregate(
             threshold,
-            keys.iter()
+            signers
+                .iter()
                 .take(threshold)
-                .map(|k| (k.0, &k.2))
+                .map(|s| (s.id, &s.verkey))
                 .collect::<Vec<(usize, &Verkey)>>(),
         );
 
@@ -522,15 +524,32 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sign_verify() {
-        let threshold = 3;
-        let total = 5;
-        let msg_count = 6;
-        let count_hidden = 2;
-        let params = Params::new(msg_count, "test".as_bytes());
-        let (_, _, keys) = trusted_party_keygen(threshold, total, &params);
+    fn check_key_aggregation_gaps_in_ids(
+        threshold: usize,
+        msg_count: usize,
+        secret_x: FieldElement,
+        secret_y: FieldElementVector,
+        keys_to_aggr: Vec<(usize, &Verkey)>,
+        params: &Params,
+    ) {
+        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 
+        let expected_X_tilde = &params.g2 * &secret_x;
+        assert_eq!(expected_X_tilde, aggr_vk.X_tilde);
+
+        for i in 0..msg_count {
+            let expected_Y_tilde_i = &params.g2 * &secret_y[i];
+            assert_eq!(expected_Y_tilde_i, aggr_vk.Y_tilde[i]);
+        }
+    }
+
+    fn check_signing_on_random_msgs(
+        threshold: usize,
+        msg_count: usize,
+        count_hidden: usize,
+        signers: &[Signer],
+        params: &Params,
+    ) {
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
 
@@ -559,22 +578,23 @@ mod tests {
             assert!(sig_req_proof
                 .verify(&sig_req, &elg_pk, &challenge, &params)
                 .unwrap());
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[i].1));
+            blinded_sigs.push(Signature::new_blinded(&sig_req, &signers[i].sigkey));
         }
 
         let mut unblinded_sigs = vec![];
         for i in 0..threshold {
             let unblinded_sig = Signature::new_unblinded(blinded_sigs[i].clone(), &elg_sk);
-            assert!(unblinded_sig.verify(&msgs, &keys[i].2, &params));
-            unblinded_sigs.push((keys[i].0, unblinded_sig));
+            assert!(unblinded_sig.verify(&msgs, &signers[i].verkey, &params));
+            unblinded_sigs.push((signers[i].id, unblinded_sig));
         }
 
         let aggr_sig = Signature::aggregate(threshold, unblinded_sigs);
 
         let aggr_vk = Verkey::aggregate(
             threshold,
-            keys.iter()
-                .map(|k| (k.0, &k.2))
+            signers
+                .iter()
+                .map(|s| (s.id, &s.verkey))
                 .collect::<Vec<(usize, &Verkey)>>(),
         );
 
@@ -582,27 +602,110 @@ mod tests {
     }
 
     #[test]
-    fn test_verkey_aggregation_gaps_in_ids() {
+    fn test_verkey_aggregation_shamir_secret_sharing_keygen() {
         let threshold = 3;
         let total = 5;
         let msg_count = 7;
         let params = Params::new(msg_count, "test".as_bytes());
-        let (secret_x, secret_y, keys) = trusted_party_keygen(threshold, total, &params);
+
+        let (secret_x, secret_y, signers) = trusted_party_SSS_keygen(threshold, total, &params);
+
+        check_key_aggregation(threshold, msg_count, secret_x, secret_y, &signers, &params)
+    }
+
+    #[test]
+    fn test_verkey_aggregation_verifiable_secret_sharing_keygen() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 7;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (g, h) = PedersenVSS_gens("testPVSS".as_bytes());
+
+        let keygen_res = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
+        let secret_x = keygen_res.0;
+        let secret_y = keygen_res.1;
+        let signers = keygen_res.2;
+
+        check_key_aggregation(threshold, msg_count, secret_x, secret_y, &signers, &params)
+    }
+
+    #[test]
+    fn test_sign_verify_shamir_secret_sharing_keygen() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 6;
+        let count_hidden = 2;
+        let params = Params::new(msg_count, "test".as_bytes());
+
+        let (_, _, signers) = trusted_party_SSS_keygen(threshold, total, &params);
+
+        check_signing_on_random_msgs(threshold, msg_count, count_hidden, &signers, &params)
+    }
+
+    #[test]
+    fn test_sign_verify_verifiable_secret_sharing_keygen() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 6;
+        let count_hidden = 2;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (g, h) = PedersenVSS_gens("testPVSS".as_bytes());
+
+        let keygen_res = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
+        let signers = keygen_res.2;
+
+        check_signing_on_random_msgs(threshold, msg_count, count_hidden, &signers, &params)
+    }
+
+    #[test]
+    fn test_verkey_aggregation_gaps_in_ids_shamir_secret_sharing_keygen() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 7;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (secret_x, secret_y, signers) = trusted_party_SSS_keygen(threshold, total, &params);
 
         let mut keys_to_aggr = vec![];
-        keys_to_aggr.push((keys[0].0, &keys[0].2));
-        keys_to_aggr.push((keys[2].0, &keys[2].2));
-        keys_to_aggr.push((keys[4].0, &keys[4].2));
+        keys_to_aggr.push((signers[0].id, &signers[0].verkey));
+        keys_to_aggr.push((signers[2].id, &signers[2].verkey));
+        keys_to_aggr.push((signers[4].id, &signers[4].verkey));
 
-        let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
+        check_key_aggregation_gaps_in_ids(
+            threshold,
+            msg_count,
+            secret_x,
+            secret_y,
+            keys_to_aggr,
+            &params,
+        );
+    }
 
-        let expected_X_tilde = &params.g2 * &secret_x;
-        assert_eq!(expected_X_tilde, aggr_vk.X_tilde);
+    #[test]
+    fn test_verkey_aggregation_gaps_in_ids_verifiable_secret_sharing_keygen() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 7;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (g, h) = PedersenVSS_gens("testPVSS".as_bytes());
 
-        for i in 0..msg_count {
-            let expected_Y_tilde_i = &params.g2 * &secret_y[i];
-            assert_eq!(expected_Y_tilde_i, aggr_vk.Y_tilde[i]);
-        }
+        let keygen_res = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
+        let secret_x = keygen_res.0;
+        let secret_y = keygen_res.1;
+        let signers = keygen_res.2;
+
+        let mut keys_to_aggr = vec![];
+        keys_to_aggr.push((signers[0].id, &signers[0].verkey));
+        keys_to_aggr.push((signers[2].id, &signers[2].verkey));
+        keys_to_aggr.push((signers[4].id, &signers[4].verkey));
+
+        check_key_aggregation_gaps_in_ids(
+            threshold,
+            msg_count,
+            secret_x,
+            secret_y,
+            keys_to_aggr,
+            &params,
+        );
     }
 
     #[test]
@@ -614,7 +717,7 @@ mod tests {
         let msg_count = 6;
         let count_hidden = 2;
         let params = Params::new(msg_count, "test".as_bytes());
-        let (_, _, keys) = trusted_party_keygen(threshold, total, &params);
+        let (_, _, signers) = trusted_party_SSS_keygen(threshold, total, &params);
 
         let msgs = FieldElementVector::random(msg_count);
         let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
@@ -645,23 +748,23 @@ mod tests {
                 .verify(&sig_req, &elg_pk, &challenge, &params)
                 .unwrap());
             // Keys at index i have id i+1
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &keys[*i - 1].1));
+            blinded_sigs.push(Signature::new_blinded(&sig_req, &signers[*i - 1].sigkey));
         }
 
         let mut unblinded_sigs = vec![];
         for i in &signer_ids {
             let unblinded_sig = Signature::new_unblinded(blinded_sigs.remove(0), &elg_sk);
             // Keys at index i have id i+1
-            assert!(unblinded_sig.verify(&msgs, &keys[*i - 1].2, &params));
-            unblinded_sigs.push((keys[*i - 1].0, unblinded_sig));
+            assert!(unblinded_sig.verify(&msgs, &signers[*i - 1].verkey, &params));
+            unblinded_sigs.push((signers[*i - 1].id, unblinded_sig));
         }
 
         let aggr_sig = Signature::aggregate(threshold, unblinded_sigs);
 
         let mut keys_to_aggr = vec![];
-        keys_to_aggr.push((keys[1].0, &keys[1].2));
-        keys_to_aggr.push((keys[3].0, &keys[3].2));
-        keys_to_aggr.push((keys[5].0, &keys[5].2));
+        keys_to_aggr.push((signers[1].id, &signers[1].verkey));
+        keys_to_aggr.push((signers[3].id, &signers[3].verkey));
+        keys_to_aggr.push((signers[5].id, &signers[5].verkey));
 
         let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 

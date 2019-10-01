@@ -1,7 +1,8 @@
 # Coconut: Threshold Issuance Selective Disclosure Credentials with Applications to Distributed Ledgers
 
-Based on the [Coconut paper](https://arxiv.org/pdf/1802.07344.pdf). Uses Shamir secret sharing for key generation. 
-This is done by a trusted third party. This trusted party's role ends at key generation.
+Based on the [Coconut paper](https://arxiv.org/pdf/1802.07344.pdf). Can use Shamir secret sharing 
+or Pedersen verifiable secret sharing for key generation. This is done by a trusted third party. 
+This trusted party's role ends at key generation.
 
 ## API
 1. Generate system parameters.
@@ -14,10 +15,56 @@ This is done by a trusted third party. This trusted party's role ends at key gen
     ```
 
 1. Keygen for issuer. This could be a distributed keygen procedure or something done by a 
-trusted third party. For prootyping, the code used the latter.
+trusted third party. For prototyping, the code used the latter.
     ```rust
-   // keys is a vector of signing and verification keys for each issuer, each element of keys is (signer_id, signing key, verification key)
-    let (_, _, keys) = trusted_party_keygen(threshold, total, &params);
+       // Below is an example of keys generated with Shamir secret sharing
+       // signers is a vector of struct `Signer` which corresponds to a single signer and contains a signer id, a signing and a 
+       // verification key
+        pub struct Signer {
+             pub id: usize,
+             pub sigkey: Sigkey,
+             pub verkey: Verkey,
+        }
+        let (_, _, signers: Vec<Signer>) = trusted_party_SSS_keygen(threshold, total, &params);
+       
+       // Below is an example of Pedersen verifiable secret sharing
+       let (g, h) = PedersenVSS_gens("testPVSS-label".as_bytes());
+       // `secret_x` and `secret_y` are the combined secrets and should never be given away. Only use for testing.
+       // `x_shares` an `y_shares` are shares of the secrets x and y (vector)
+       // `comm_coeff_x` and `comm_coeff_y` are commitments to coefficients of polynomial used to share `secret_x` and `secret_y`
+       // `signers` is a vector of struct `Signer` like above
+       let (
+           secret_x,
+           secret_y,
+           signers,
+           _,
+           comm_coeff_x,
+           x_shares,
+           x_t_shares,
+           _,
+           comm_coeff_y,
+           y_shares,
+           y_t_shares,
+       ) = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
+       
+       // Each participant can verify its share as
+       PedersenVSS_verify_share(
+           threshold,
+           participant_id,
+           (&x_shares[&i], &x_t_shares[&i]),
+           &comm_coeff_x,
+           &g,
+           &h
+       )
+       
+       PedersenVSS_verify_share(
+           threshold,
+           participant_id,
+           (&y_shares[j][&i], &y_t_shares[j][&i]),
+           &comm_coeff_y[j],
+           &g,
+           &h
+       )
     ```
 
 1. User takes his attributes, generates an Elgamal keypair and creates a signature request 

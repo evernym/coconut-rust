@@ -26,5 +26,5 @@ pub mod errors;
 pub mod elgamal;
 pub mod keygen;
 pub mod pok_sig;
+pub mod secret_sharing;
 pub mod signature;
-pub mod sss;
