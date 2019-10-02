@@ -123,7 +123,13 @@ impl SignatureRequest {
 
         randomness.push(r);
 
-        let h = SignatureGroup::from_msg_hash(&commitment.to_bytes());
+        let known_messages = messages
+            .iter()
+            .skip(count_hidden)
+            .map(|f| f.clone())
+            .collect::<Vec<FieldElement>>();
+
+        let h = Self::compute_h(&commitment, &known_messages);
 
         // Each element of `ciphertexts` is the elgamal ciphertext and the randomness used during encryption.
         // The randomness is used for proof of knowledge
@@ -139,17 +145,26 @@ impl SignatureRequest {
 
         (
             Self {
-                known_messages: messages
-                    .iter()
-                    .skip(count_hidden)
-                    .map(|f| f.clone())
-                    .collect::<Vec<FieldElement>>()
-                    .into(),
+                known_messages: known_messages.into(),
                 commitment,
                 ciphertexts,
             },
             randomness,
         )
+    }
+
+    /// Compute a generator in SignatureGroup by hashing commitment to hidden messages and all known messages.
+    /// It is important that the for computing h, all messages in the signature are taken into account to
+    /// prevent malleability.
+    pub fn compute_h(
+        commitment: &SignatureGroup,
+        known_messages: &[FieldElement],
+    ) -> SignatureGroup {
+        let mut bytes = commitment.to_bytes();
+        for m in known_messages {
+            bytes.append(&mut m.to_bytes());
+        }
+        SignatureGroup::from_msg_hash(&bytes)
     }
 }
 
@@ -189,7 +204,7 @@ impl SignatureRequestPoK {
         let committed_comm = committing_comm.finish();
 
         // XXX: This computation can be avoided if h is persisted from `new`
-        let h = SignatureGroup::from_msg_hash(&sig_req.commitment.to_bytes());
+        let h = SignatureRequest::compute_h(&sig_req.commitment, sig_req.known_messages.as_slice());
 
         let mut ciphertext_commts = vec![];
         for i in 0..sig_req.ciphertexts.len() {
@@ -271,7 +286,10 @@ impl SignatureRequestProof {
         params: &Params,
     ) -> Result<bool, CoconutError> {
         assert_eq!(self.proof_ciphertexts.len(), sig_req.ciphertexts.len());
-        assert_eq!(self.proof_commitment.responses.len(), self.proof_ciphertexts.len()+1);
+        assert_eq!(
+            self.proof_commitment.responses.len(),
+            self.proof_ciphertexts.len() + 1
+        );
 
         // Verify proof of knowledge of Elgamal secret key
         if !self
@@ -297,7 +315,7 @@ impl SignatureRequestProof {
         }
 
         // XXX: This computation can be avoided if h is persisted`
-        let h = SignatureGroup::from_msg_hash(&sig_req.commitment.to_bytes());
+        let h = SignatureRequest::compute_h(&sig_req.commitment, sig_req.known_messages.as_slice());
         let bases = vec![elgamal_pk.clone(), h];
         for (i, (proof_1, proof_2)) in self.proof_ciphertexts.iter().enumerate() {
             // The response for the hidden message should be same as that in the commitment.
@@ -326,7 +344,10 @@ impl Signature {
             sigkey.y.len()
         );
 
-        let h = SignatureGroup::from_msg_hash(&sig_request.commitment.to_bytes());
+        let h = SignatureRequest::compute_h(
+            &sig_request.commitment,
+            sig_request.known_messages.as_slice(),
+        );
 
         // The blinded signature is (h, c_tilde).
         // c_tilde = (a_1^y_1.a_2^y_2...a_hidden_msg_count^y_hidden_msg_count, b_1^y_1.b_2^y_2....b_hidden_msg_count^y_hidden_msg_count . h^(x + y_{hidden_msg_count+1}*m_{hidden_msg_count+1} + y_{hidden_msg_count+2}*m_{hidden_msg_count+2} + .. y_n*m_n))
