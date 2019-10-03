@@ -45,6 +45,7 @@ pub struct Verkey {
     pub Y_tilde: Vec<OtherGroup>,
 }
 
+/// Created by entity requesting a signature
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignatureRequest {
     pub known_messages: FieldElementVector,
@@ -72,6 +73,8 @@ impl_PoK_VC!(
     SignatureGroupVec
 );
 
+/// Created by entity requesting a signature to prove knowledge of hidden elements used in SignatureRequest.
+/// Represents the commitment phase of Schnoor protocol
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignatureRequestPoK {
     pub pok_vc_elgamal_sk: ProverCommittedSignatureGroup,
@@ -79,6 +82,8 @@ pub struct SignatureRequestPoK {
     pub pok_vc_ciphertext: Vec<(ProverCommittedSignatureGroup, ProverCommittedSignatureGroup)>,
 }
 
+/// Created by entity requesting a signature to prove knowledge of hidden elements used in SignatureRequest.
+/// Represents the response phase of Schnoor protocol
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignatureRequestProof {
     pub proof_elgamal_sk: ProofSignatureGroup,
@@ -399,7 +404,7 @@ impl Signature {
         }
     }
 
-    /// Create an aggregated signature. "AggCred" from paper.
+    /// Create an aggregated signature from signatures from various signers. "AggCred" from paper.
     pub fn aggregate(threshold: usize, sigs: Vec<(usize, Signature)>) -> Signature {
         assert!(sigs.len() >= threshold);
         let mut s_bases = SignatureGroupVec::with_capacity(threshold);
@@ -496,7 +501,7 @@ impl Verkey {
 mod tests {
     use super::*;
     use crate::keygen::{trusted_party_PVSS_keygen, trusted_party_SSS_keygen, Signer};
-    use crate::secret_sharing::PedersenVSS_gens;
+    use crate::secret_sharing::PedersenVSS;
 
     fn check_key_aggregation(
         threshold: usize,
@@ -619,7 +624,7 @@ mod tests {
         let total = 5;
         let msg_count = 7;
         let params = Params::new(msg_count, "test".as_bytes());
-        let (g, h) = PedersenVSS_gens("testPVSS".as_bytes());
+        let (g, h) = PedersenVSS::gens("testPVSS".as_bytes());
 
         let keygen_res = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
         let secret_x = keygen_res.0;
@@ -649,7 +654,7 @@ mod tests {
         let msg_count = 6;
         let count_hidden = 2;
         let params = Params::new(msg_count, "test".as_bytes());
-        let (g, h) = PedersenVSS_gens("testPVSS".as_bytes());
+        let (g, h) = PedersenVSS::gens("testPVSS".as_bytes());
 
         let keygen_res = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
         let signers = keygen_res.2;
@@ -686,7 +691,7 @@ mod tests {
         let total = 5;
         let msg_count = 7;
         let params = Params::new(msg_count, "test".as_bytes());
-        let (g, h) = PedersenVSS_gens("testPVSS".as_bytes());
+        let (g, h) = PedersenVSS::gens("testPVSS".as_bytes());
 
         let keygen_res = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
         let secret_x = keygen_res.0;

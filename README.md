@@ -1,8 +1,9 @@
 # Coconut: Threshold Issuance Selective Disclosure Credentials with Applications to Distributed Ledgers
 
 Based on the [Coconut paper](https://arxiv.org/pdf/1802.07344.pdf). Can use Shamir secret sharing 
-or Pedersen verifiable secret sharing for key generation. This is done by a trusted third party. 
-This trusted party's role ends at key generation.
+or Pedersen verifiable secret sharing (centalized and decentralized versions available) for key generation. 
+Centralized keygen is done by a trusted third party. This trusted party's role ends at key generation. 
+The decentralized version of Pedersen's secret sharing can be used to avoid the trusted third party.
 
 ## API
 1. Generate system parameters.
@@ -28,7 +29,7 @@ trusted third party. For prototyping, the code used the latter.
         let (_, _, signers: Vec<Signer>) = trusted_party_SSS_keygen(threshold, total, &params);
        
        // Below is an example of Pedersen verifiable secret sharing
-       let (g, h) = PedersenVSS_gens("testPVSS-label".as_bytes());
+       let (g, h) = PedersenVSS::gens("testPVSS-label".as_bytes());
        // `secret_x` and `secret_y` are the combined secrets and should never be given away. Only use for testing.
        // `x_shares` an `y_shares` are shares of the secrets x and y (vector)
        // `comm_coeff_x` and `comm_coeff_y` are commitments to coefficients of polynomial used to share `secret_x` and `secret_y`
@@ -48,7 +49,7 @@ trusted third party. For prototyping, the code used the latter.
        ) = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
        
        // Each participant can verify its share as
-       PedersenVSS_verify_share(
+       PedersenVSS::verify_share(
            threshold,
            participant_id,
            (&x_shares[&i], &x_t_shares[&i]),
@@ -57,16 +58,19 @@ trusted third party. For prototyping, the code used the latter.
            &h
        )
        
-       PedersenVSS_verify_share(
+       PedersenVSS::verify_share(
            threshold,
            participant_id,
            (&y_shares[j][&i], &y_t_shares[j][&i]),
            &comm_coeff_y[j],
            &g,
            &h
-       )
+       ) 
     ```
-
+    Also provided a decentralized (no trusted third party) verifiable secret sharing which 
+    can be used for keygen. Use `PedersenDVSSParticipant`. Look at test `test_Pedersen_DVSS` for an 
+    example of secret sharing.
+           
 1. User takes his attributes, generates an Elgamal keypair and creates a signature request 
 to be sent to Signers (Issuers)
     ```rust

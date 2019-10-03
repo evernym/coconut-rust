@@ -1,4 +1,4 @@
-use crate::secret_sharing::{get_shared_secret, PedersenVSS_deal};
+use crate::secret_sharing::{get_shared_secret, PedersenVSS};
 use crate::signature::{Params, Sigkey, Verkey};
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem_g1::G1;
@@ -88,7 +88,7 @@ pub fn trusted_party_PVSS_keygen(
     Vec<HashMap<usize, FieldElement>>,
 ) {
     let (secret_x, secret_x_t, comm_coeff_x, x_shares, x_t_shares) =
-        PedersenVSS_deal(threshold, total, g, h);
+        PedersenVSS::deal(threshold, total, g, h);
     let mut y = vec![];
     let mut secret_y = FieldElementVector::with_capacity(params.msg_count());
     let mut secret_y_t = FieldElementVector::with_capacity(params.msg_count());
@@ -96,7 +96,7 @@ pub fn trusted_party_PVSS_keygen(
     let mut y_t = vec![];
     for _ in 0..params.msg_count() {
         let (sec_y, sec_y_t, comm_coeff_y, y_shares, y_t_shares) =
-            PedersenVSS_deal(threshold, total, g, h);
+            PedersenVSS::deal(threshold, total, g, h);
         secret_y.push(sec_y);
         secret_y_t.push(sec_y_t);
         comm_coeff_y_vec.push(comm_coeff_y);
@@ -121,9 +121,7 @@ pub fn trusted_party_PVSS_keygen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::secret_sharing::{
-        reconstruct_secret, PedersenVSS_gens, PedersenVSS_verify_share, Polynomial,
-    };
+    use crate::secret_sharing::{reconstruct_secret, Polynomial};
     use crate::OtherGroupVec;
     use amcl_wrapper::group_elem::GroupElementVector;
     use std::collections::{HashMap, HashSet};
@@ -229,7 +227,7 @@ mod tests {
         let total = 5;
         let msg_count = 7;
         let params = Params::new(msg_count, "test".as_bytes());
-        let (g, h) = PedersenVSS_gens("testPVSS".as_bytes());
+        let (g, h) = PedersenVSS::gens("testPVSS".as_bytes());
 
         let (
             secret_x,
@@ -246,7 +244,7 @@ mod tests {
         ) = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
 
         for i in 1..=total {
-            assert!(PedersenVSS_verify_share(
+            assert!(PedersenVSS::verify_share(
                 threshold,
                 i,
                 (&x_shares[&i], &x_t_shares[&i]),
@@ -255,7 +253,7 @@ mod tests {
                 &h
             ));
             for j in 0..msg_count {
-                assert!(PedersenVSS_verify_share(
+                assert!(PedersenVSS::verify_share(
                     threshold,
                     i,
                     (&y_shares[j][&i], &y_t_shares[j][&i]),
@@ -267,5 +265,15 @@ mod tests {
         }
 
         check_reconstructed_keys(threshold, msg_count, secret_x, secret_y, &signers, &params);
+    }
+
+    #[test]
+    fn test_keygen_reconstruction_decentralized_verifiable_secret_sharing() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 7;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (g, h) = PedersenVSS::gens("testPVSS".as_bytes());
+        // TODO: Use PedersenDVSSParticipant to show keygen works
     }
 }
