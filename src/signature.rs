@@ -500,7 +500,9 @@ impl Verkey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keygen::{trusted_party_PVSS_keygen, trusted_party_SSS_keygen, Signer};
+    use crate::keygen::{
+        setup_signers_for_test, trusted_party_PVSS_keygen, trusted_party_SSS_keygen, Signer,
+    };
     use crate::secret_sharing::PedersenVSS;
 
     fn check_key_aggregation(
@@ -658,6 +660,20 @@ mod tests {
 
         let keygen_res = trusted_party_PVSS_keygen(threshold, total, &params, &g, &h);
         let signers = keygen_res.2;
+
+        check_signing_on_random_msgs(threshold, msg_count, count_hidden, &signers, &params)
+    }
+
+    #[test]
+    fn test_sign_verify_decentralized_verifiable_secret_sharing_keygen() {
+        let threshold = 3;
+        let total = 5;
+        let msg_count = 6;
+        let count_hidden = 2;
+        let params = Params::new(msg_count, "test".as_bytes());
+        let (g, h) = PedersenVSS::gens("testPVSS".as_bytes());
+
+        let (_, _, signers) = setup_signers_for_test(threshold, total, &params, &g, &h);
 
         check_signing_on_random_msgs(threshold, msg_count, count_hidden, &signers, &params)
     }

@@ -118,6 +118,47 @@ pub fn trusted_party_PVSS_keygen(
     )
 }
 
+/// Create signers with their keys generated using Pedersen decentralized secret sharing
+#[cfg(test)]
+pub(crate) fn setup_signers_for_test(
+    threshold: usize,
+    total: usize,
+    params: &Params,
+    g: &G1,
+    h: &G1,
+) -> (FieldElement, FieldElementVector, Vec<Signer>) {
+    use crate::secret_sharing::share_secret_for_testing;
+
+    let mut secret_x = FieldElement::zero();
+    let mut secret_y = FieldElementVector::with_capacity(params.msg_count());
+
+    let mut x_shares: HashMap<usize, FieldElement> = HashMap::new();
+    let mut y_shares: Vec<HashMap<usize, FieldElement>> = vec![];
+
+    // Each participant generates its share for `x`
+    let participants_x = share_secret_for_testing(threshold, total, &g, &h);
+    for i in 0..total {
+        x_shares.insert(participants_x[i].id, participants_x[i].secret_share.clone());
+        secret_x += &participants_x[i].secret;
+    }
+
+    for _ in 0..params.msg_count() {
+        let mut y: HashMap<usize, FieldElement> = HashMap::new();
+        let mut sec_y = FieldElement::zero();
+        // Each participant generates its share for a `y`
+        let participants_y = share_secret_for_testing(threshold, total, &g, &h);
+        for i in 0..total {
+            y.insert(participants_y[i].id, participants_y[i].secret_share.clone());
+            sec_y += &participants_y[i].secret;
+        }
+        y_shares.push(y);
+        secret_y.push(sec_y);
+    }
+
+    let signers = keygen_from_shares(total, x_shares, y_shares, params);
+    (secret_x, secret_y, signers)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +315,10 @@ mod tests {
         let msg_count = 7;
         let params = Params::new(msg_count, "test".as_bytes());
         let (g, h) = PedersenVSS::gens("testPVSS".as_bytes());
-        // TODO: Use PedersenDVSSParticipant to show keygen works
+
+        let (secret_x, secret_y, signers) =
+            setup_signers_for_test(threshold, total, &params, &g, &h);
+
+        check_reconstructed_keys(threshold, msg_count, secret_x, secret_y, &signers, &params);
     }
 }

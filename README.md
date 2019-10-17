@@ -68,8 +68,8 @@ trusted third party. For prototyping, the code used the latter.
        ) 
     ```
     Also provided a decentralized (no trusted third party) verifiable secret sharing which 
-    can be used for keygen. Use `PedersenDVSSParticipant`. Look at test `test_Pedersen_DVSS` for an 
-    example of secret sharing.
+    can be used for keygen. Use `PedersenDVSSParticipant`. Look at tests `test_Pedersen_DVSS`, `test_keygen_reconstruction_decentralized_verifiable_secret_sharing`,
+    `test_sign_verify_decentralized_verifiable_secret_sharing_keygen` for examples of secret sharing, key generation and signing respectively
            
 1. User takes his attributes, generates an Elgamal keypair and creates a signature request 
 to be sent to Signers (Issuers)
@@ -174,4 +174,5 @@ the indices of the messages being revealed to `PoKOfSignature`.
 ## Pending
 1. Error handling. Start with asserts in non-test code.
 1. Documentation
+1. Benchmarking
 
