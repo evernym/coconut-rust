@@ -29,7 +29,7 @@ pub fn transform_to_PS_sig(sig: &Signature) -> PSSignature {
 mod tests {
     use super::*;
     use crate::keygen::trusted_party_SSS_keygen;
-    use crate::signature::{SignatureRequest, SignatureRequestPoK};
+    use crate::signature::{BlindSignature, SignatureRequest, SignatureRequestPoK};
     use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
     use ps_sig::pok_sig::PoKOfSignature;
     use std::collections::{HashMap, HashSet};
@@ -71,12 +71,12 @@ mod tests {
             assert!(sig_req_proof
                 .verify(&sig_req, &elg_pk, &challenge, &params)
                 .unwrap());
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &signers[i].sigkey));
+            blinded_sigs.push(BlindSignature::new(&sig_req, &signers[i].sigkey));
         }
 
         let mut unblinded_sigs = vec![];
         for i in 0..threshold {
-            let unblinded_sig = Signature::new_unblinded(blinded_sigs[i].clone(), &elg_sk);
+            let unblinded_sig = blinded_sigs.remove(0).unblind(&elg_sk);
             unblinded_sigs.push((signers[i].id, unblinded_sig));
         }
 

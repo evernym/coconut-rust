@@ -53,12 +53,14 @@ pub struct SignatureRequest {
     pub ciphertexts: Vec<(SignatureGroup, SignatureGroup)>,
 }
 
+/// Created by the signer
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlindSignature {
     pub h: SignatureGroup,
     pub blinded: (SignatureGroup, SignatureGroup),
 }
 
+/// Result of the unblinding of the blind signature. Is in the form of PS signature.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Signature {
     pub sigma_1: SignatureGroup,
@@ -339,9 +341,9 @@ impl SignatureRequestProof {
     }
 }
 
-impl Signature {
+impl BlindSignature {
     /// Signed creates a blinded signature. "BlindSign" from paper.
-    pub fn new_blinded(sig_request: &SignatureRequest, sigkey: &Sigkey) -> BlindSignature {
+    pub fn new(sig_request: &SignatureRequest, sigkey: &Sigkey) -> BlindSignature {
         let hidden_msg_count = sig_request.ciphertexts.len();
 
         assert_eq!(
@@ -395,15 +397,17 @@ impl Signature {
     }
 
     /// User unblinds the blinded signature received from a signer. "Unblind" from paper.
-    pub fn new_unblinded(sig: BlindSignature, elgamal_sk: &FieldElement) -> Signature {
-        let a_sk = &sig.blinded.0 * elgamal_sk;
-        let sigma_2 = &sig.blinded.1 - &a_sk;
+    pub fn unblind(self, elgamal_sk: &FieldElement) -> Signature {
+        let a_sk = &self.blinded.0 * elgamal_sk;
+        let sigma_2 = &self.blinded.1 - &a_sk;
         Signature {
-            sigma_1: sig.h,
+            sigma_1: self.h,
             sigma_2,
         }
     }
+}
 
+impl Signature {
     /// Create an aggregated signature from signatures from various signers. "AggCred" from paper.
     pub fn aggregate(threshold: usize, sigs: Vec<(usize, Signature)>) -> Signature {
         assert!(sigs.len() >= threshold);
@@ -585,12 +589,12 @@ mod tests {
             assert!(sig_req_proof
                 .verify(&sig_req, &elg_pk, &challenge, &params)
                 .unwrap());
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &signers[i].sigkey));
+            blinded_sigs.push(BlindSignature::new(&sig_req, &signers[i].sigkey));
         }
 
         let mut unblinded_sigs = vec![];
         for i in 0..threshold {
-            let unblinded_sig = Signature::new_unblinded(blinded_sigs[i].clone(), &elg_sk);
+            let unblinded_sig = blinded_sigs.remove(0).unblind(&elg_sk);
             assert!(unblinded_sig.verify(&msgs, &signers[i].verkey, &params));
             unblinded_sigs.push((signers[i].id, unblinded_sig));
         }
@@ -769,12 +773,12 @@ mod tests {
                 .verify(&sig_req, &elg_pk, &challenge, &params)
                 .unwrap());
             // Keys at index i have id i+1
-            blinded_sigs.push(Signature::new_blinded(&sig_req, &signers[*i - 1].sigkey));
+            blinded_sigs.push(BlindSignature::new(&sig_req, &signers[*i - 1].sigkey));
         }
 
         let mut unblinded_sigs = vec![];
         for i in &signer_ids {
-            let unblinded_sig = Signature::new_unblinded(blinded_sigs.remove(0), &elg_sk);
+            let unblinded_sig = blinded_sigs.remove(0).unblind(&elg_sk);
             // Keys at index i have id i+1
             assert!(unblinded_sig.verify(&msgs, &signers[*i - 1].verkey, &params));
             unblinded_sigs.push((signers[*i - 1].id, unblinded_sig));

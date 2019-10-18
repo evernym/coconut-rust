@@ -110,6 +110,7 @@ pub struct PedersenVSS {}
 
 impl PedersenVSS {
     /// Generators used for commitment.
+    // TODO: Wrap `gens` in a struct
     pub fn gens(label: &[u8]) -> (G1, G1) {
         // For NUMS.
         let g = G1::from_msg_hash(&[label, " : g".as_bytes()].concat());
@@ -117,7 +118,7 @@ impl PedersenVSS {
         (g, h)
     }
 
-    /// Executed by dealer. Output commitment to secret, commitment to coefficients of both polynomials
+    /// Executed by dealer. Output secret, blinding, commitment to coefficients of both polynomials
     /// and shares for each participant. Each participant has access to all commitments to coefficients
     /// but only to its own share.
     pub fn deal(
@@ -126,18 +127,20 @@ impl PedersenVSS {
         g: &G1,
         h: &G1,
     ) -> (
-        FieldElement,
-        FieldElement,
-        HashMap<usize, G1>,
-        HashMap<usize, FieldElement>,
-        HashMap<usize, FieldElement>,
+        FieldElement,                 // secret
+        FieldElement,                 // blinding
+        HashMap<usize, G1>,           // commitment to coefficients
+        HashMap<usize, FieldElement>, // shares for secret
+        HashMap<usize, FieldElement>, // shares for blinding
     ) {
         let (s, s_shares, s_poly) = get_shared_secret_with_polynomial(threshold, total);
         let (t, t_shares, t_poly) = get_shared_secret_with_polynomial(threshold, total);
+        // map of i -> g^s_poly.coefficients[i] * h^t_poly.coefficients[i]
         let commitment_coeffs = (0..threshold)
             .map(|i| {
                 (
                     i,
+                    // g^s_poly.coefficients[i] * h^t_poly.coefficients[i]
                     g.binary_scalar_mul(&h, &s_poly.coefficients()[i], &t_poly.coefficients()[i]),
                 )
             })
@@ -191,7 +194,7 @@ impl PedersenVSS {
     After each of the n participants has successfully runs a VSS, they generate their corresponding share of s by adding
     their shares of each s_i_0 for i in 1 to n.
 */
-// TODO: Model the state machine better
+// TODO: Model the code as state machine
 pub struct PedersenDVSSParticipant {
     pub id: usize,
     pub secret: FieldElement,
@@ -265,6 +268,7 @@ impl PedersenDVSSParticipant {
 
         // Compute own share and commitment to coefficients of the distributed secret.
         for i in 0..threshold {
+            // cm is the sum of coefficients of each signer's polynomial's ith degree term
             let mut cm = G1::identity();
             for j in 1..=total {
                 if j != self.id {

@@ -104,12 +104,12 @@ to be sent to Signers (Issuers)
 1. Each signer will verify the proof and create a blind signature which is sent back to user.
     ```rust
    assert!(sig_req_proof.verify(&sig_req, &elg_pk, &challenge, &params));
-   let blinded_sig = Signature::new_blinded(&sig_req, &sig_key);
+   let blinded_sig = BlindSignature::new(&sig_req, &sig_key);
     ```
    
 1. User unblinds the signature and verifies correctness of signature
     ```rust
-    let unblinded_sig = Signature::new_unblinded(blinded_sig, &elg_sk);
+    let unblinded_sig = blinded_sig.unblind(&elg_sk);
     unblinded_sig.verify(&msgs, &verkey, &params);
     ```
 

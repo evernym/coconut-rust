@@ -75,15 +75,15 @@ pub fn trusted_party_PVSS_keygen(
     g: &G1,
     h: &G1,
 ) -> (
-    FieldElement,
-    FieldElementVector,
+    FieldElement,       // shared secret for x
+    FieldElementVector, // shared secret for each y
     Vec<Signer>,
-    FieldElement,
-    HashMap<usize, G1>,
+    FieldElement,       // blinding for x
+    HashMap<usize, G1>, // commitment to coefficients for polynomial for x
     HashMap<usize, FieldElement>,
     HashMap<usize, FieldElement>,
-    FieldElementVector,
-    Vec<HashMap<usize, G1>>,
+    FieldElementVector,      // blindings for each y
+    Vec<HashMap<usize, G1>>, // commitment to coefficients for polynomial for each y
     Vec<HashMap<usize, FieldElement>>,
     Vec<HashMap<usize, FieldElement>>,
 ) {
@@ -291,7 +291,7 @@ mod tests {
                 (&x_shares[&i], &x_t_shares[&i]),
                 &comm_coeff_x,
                 &g,
-                &h
+                &h,
             ));
             for j in 0..msg_count {
                 assert!(PedersenVSS::verify_share(
@@ -300,7 +300,7 @@ mod tests {
                     (&y_shares[j][&i], &y_t_shares[j][&i]),
                     &comm_coeff_y[j],
                     &g,
-                    &h
+                    &h,
                 ));
             }
         }
