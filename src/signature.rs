@@ -136,19 +136,22 @@ impl SignatureRequest {
             .map(|f| f.clone())
             .collect::<Vec<FieldElement>>();
 
-        let h = Self::compute_h(&commitment, &known_messages);
-
         // Each element of `ciphertexts` is the elgamal ciphertext and the randomness used during encryption.
         // The randomness is used for proof of knowledge
-        let ciphertexts = messages
-            .iter()
-            .take(count_hidden)
-            .map(|m| {
-                let (c1, c2, k) = elgamal_encrypt!(&params.g1, elgamal_pubkey, &(&h * m));
-                randomness.push(k);
-                (c1, c2)
-            })
-            .collect::<Vec<(SignatureGroup, SignatureGroup)>>();
+        let ciphertexts = if count_hidden > 0 {
+            let h = Self::compute_h(&commitment, &known_messages);
+            messages
+                .iter()
+                .take(count_hidden)
+                .map(|m| {
+                    let (c1, c2, k) = elgamal_encrypt!(&params.g1, elgamal_pubkey, &(&h * m));
+                    randomness.push(k);
+                    (c1, c2)
+                })
+                .collect::<Vec<(SignatureGroup, SignatureGroup)>>()
+        } else {
+            vec![]
+        };
 
         (
             Self {
@@ -210,20 +213,25 @@ impl SignatureRequestPoK {
         committing_comm.commit(&params.g1, None);
         let committed_comm = committing_comm.finish();
 
-        // XXX: This computation can be avoided if h is persisted from `new`
-        let h = SignatureRequest::compute_h(&sig_req.commitment, sig_req.known_messages.as_slice());
+        let ciphertext_commts = if sig_req.ciphertexts.len() > 0 {
+            // XXX: This computation can be avoided if h is persisted from `new`
+            let h = SignatureRequest::compute_h(&sig_req.commitment, sig_req.known_messages.as_slice());
 
-        let mut ciphertext_commts = vec![];
-        for i in 0..sig_req.ciphertexts.len() {
-            let mut committing_1 = ProverCommittingSignatureGroup::new();
-            committing_1.commit(&params.g1, None);
+            let mut ciphertext_commts = vec![];
+            for i in 0..sig_req.ciphertexts.len() {
+                let mut committing_1 = ProverCommittingSignatureGroup::new();
+                committing_1.commit(&params.g1, None);
 
-            let mut committing_2 = ProverCommittingSignatureGroup::new();
-            committing_2.commit(elgamal_pk, None);
-            // Use the same blinding for the hidden message used in the commitment
-            committing_2.commit(&h, Some(&hidden_msg_blindings[i]));
-            ciphertext_commts.push((committing_1.finish(), committing_2.finish()));
-        }
+                let mut committing_2 = ProverCommittingSignatureGroup::new();
+                committing_2.commit(elgamal_pk, None);
+                // Use the same blinding for the hidden message used in the commitment
+                committing_2.commit(&h, Some(&hidden_msg_blindings[i]));
+                ciphertext_commts.push((committing_1.finish(), committing_2.finish()));
+            }
+            ciphertext_commts
+        } else {
+            vec![]
+        };
 
         SignatureRequestPoK {
             pok_vc_elgamal_sk: committed_elgamal_sk,
@@ -343,7 +351,7 @@ impl SignatureRequestProof {
 
 impl BlindSignature {
     /// Signed creates a blinded signature. "BlindSign" from paper.
-    pub fn new(sig_request: &SignatureRequest, sigkey: &Sigkey) -> BlindSignature {
+    pub fn new(sig_request: &SignatureRequest, sigkey: &Sigkey) -> Self {
         let hidden_msg_count = sig_request.ciphertexts.len();
 
         assert_eq!(
@@ -390,7 +398,7 @@ impl BlindSignature {
         let c_tilde_2 = c_tilde_2_bases
             .multi_scalar_mul_const_time(&c_tilde_2_exps)
             .unwrap();
-        BlindSignature {
+        Self {
             h,
             blinded: (c_tilde_1, c_tilde_2),
         }
