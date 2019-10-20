@@ -21,10 +21,11 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 
+extern crate secret_sharing;
+
 pub mod errors;
 #[macro_use]
 pub mod elgamal;
 pub mod keygen;
 pub mod pok_sig;
-pub mod secret_sharing;
 pub mod signature;

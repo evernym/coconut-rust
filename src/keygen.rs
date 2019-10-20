@@ -1,8 +1,11 @@
-use crate::secret_sharing::{get_shared_secret, PedersenVSS};
+use secret_sharing::shamir_secret_sharing::get_shared_secret;
+use secret_sharing::pedersen_vss::PedersenVSS;
+
 use crate::signature::{Params, Sigkey, Verkey};
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem_g1::G1;
 use std::collections::HashMap;
+use secret_sharing::pedersen_dvss::PedersenDVSSParticipant;
 
 pub struct Signer {
     pub id: usize,
@@ -118,6 +121,49 @@ pub fn trusted_party_PVSS_keygen(
     )
 }
 
+/// Create participants that take part in a decentralized secret sharing and perform the secret sharing.
+#[cfg(test)]
+pub fn share_secret_for_testing(
+    threshold: usize,
+    total: usize,
+    g: &G1,
+    h: &G1,
+) -> Vec<PedersenDVSSParticipant> {
+    let mut participants = vec![];
+
+    // Each participant generates a new secret and verifiable shares of that secret for everyone.
+    for i in 1..=total {
+        let p = PedersenDVSSParticipant::new(i, threshold, total, g, h);
+        participants.push(p);
+    }
+
+    // Every participant gives shares of its secret to others
+    for i in 0..total {
+        for j in 0..total {
+            if i == j {
+                continue;
+            }
+            let (id, comm_coeffs, (s, t)) = (
+                participants[j].id.clone(),
+                participants[j].comm_coeffs.clone(),
+                (
+                    participants[j].s_shares[&(i + 1)].clone(),
+                    participants[j].t_shares[&(i + 1)].clone(),
+                ),
+            );
+
+            let recv_p = &mut participants[i];
+            recv_p.received_share(id, comm_coeffs, (s, t), threshold, total, g, h);
+        }
+    }
+
+    // Every participant computes its share to the distributed secret.
+    for i in 0..total {
+        participants[i].compute_final_comm_coeffs_and_shares(threshold, total, g, h);
+    }
+    participants
+}
+
 /// Create signers with their keys generated using Pedersen decentralized secret sharing
 #[cfg(test)]
 pub(crate) fn setup_signers_for_test(
@@ -127,7 +173,6 @@ pub(crate) fn setup_signers_for_test(
     g: &G1,
     h: &G1,
 ) -> (FieldElement, FieldElementVector, Vec<Signer>) {
-    use crate::secret_sharing::share_secret_for_testing;
 
     let mut secret_x = FieldElement::zero();
     let mut secret_y = FieldElementVector::with_capacity(params.msg_count());
@@ -162,7 +207,8 @@ pub(crate) fn setup_signers_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::secret_sharing::{reconstruct_secret, Polynomial};
+    use secret_sharing::polynomial::Polynomial;
+    use secret_sharing::shamir_secret_sharing::reconstruct_secret;
     use crate::OtherGroupVec;
     use amcl_wrapper::group_elem::GroupElementVector;
     use std::collections::{HashMap, HashSet};

@@ -1,9 +1,12 @@
 use crate::errors::CoconutError;
-use crate::secret_sharing::Polynomial;
+use secret_sharing::polynomial::Polynomial;
 use crate::{ate_2_pairing, OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
 use ps_sig::errors::PSError;
+use ps_sig::keys::Params as PSParams;
+use ps_sig::keys::Verkey as PSVerkey;
+use ps_sig::signature::Signature as PSSignature;
 use std::collections::HashSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -74,6 +77,31 @@ impl_PoK_VC!(
     SignatureGroup,
     SignatureGroupVec
 );
+
+// TODO: Following transformations result in clonings. Fix them.
+// Transform the params to Params struct of ps_sig crate
+pub fn transform_to_PS_params(params: &Params) -> PSParams {
+    PSParams {
+        g: params.g.clone(),
+        g_tilde: params.g_tilde.clone(),
+    }
+}
+
+// Transform the verkey to Verkey struct of ps_sig crate
+pub fn transform_to_PS_verkey(vk: &Verkey) -> PSVerkey {
+    PSVerkey {
+        X_tilde: vk.X_tilde.clone(),
+        Y_tilde: vk.Y_tilde.clone(),
+    }
+}
+
+// Transform the signature to Signature struct of ps_sig crate
+pub fn transform_to_PS_sig(sig: &Signature) -> PSSignature {
+    PSSignature {
+        sigma_1: sig.sigma_1.clone(),
+        sigma_2: sig.sigma_2.clone(),
+    }
+}
 
 /// Created by entity requesting a signature to prove knowledge of hidden elements used in SignatureRequest.
 /// Represents the commitment phase of Schnoor protocol
@@ -442,22 +470,11 @@ impl Signature {
     }
 
     /// Verify a signature. Can verify unblinded sig received from a signer and the aggregate sig as well.
-    pub fn verify(&self, messages: &FieldElementVector, vk: &Verkey, params: &Params) -> bool {
-        assert_eq!(messages.len(), vk.Y_tilde.len());
-        if self.sigma_1.is_identity() || self.sigma_2.is_identity() {
-            return false;
-        }
-        let mut Y_m_bases = OtherGroupVec::with_capacity(messages.len());
-        let mut Y_m_exps = FieldElementVector::with_capacity(messages.len());
-        for i in 0..messages.len() {
-            Y_m_bases.push(vk.Y_tilde[i].clone());
-            Y_m_exps.push(messages[i].clone());
-        }
-        // Y_m = X_tilde * Y_tilde[1]^m_1 * Y_tilde[2]^m_2 * ...Y_tilde[i]^m_i
-        let Y_m = &vk.X_tilde + &(Y_m_bases.multi_scalar_mul_var_time(&Y_m_exps).unwrap());
-        // e(sigma_1, Y_m) == e(sigma_2, g2) => e(sigma_1, Y_m) * e(-sigma_2, g2) == 1
-        let e = ate_2_pairing(&self.sigma_1, &Y_m, &(self.sigma_2.negation()), &params.g_tilde);
-        e.is_one()
+    pub fn verify(&self, messages: &[FieldElement], vk: &Verkey, params: &Params) -> bool {
+        let p = transform_to_PS_params(params);
+        let vk = transform_to_PS_verkey(vk);
+        // TODO: Remove unwrap
+        PSSignature::verify(&transform_to_PS_sig(&self), messages, &vk, &p).unwrap()
     }
 }
 
@@ -515,7 +532,7 @@ mod tests {
     use crate::keygen::{
         setup_signers_for_test, trusted_party_PVSS_keygen, trusted_party_SSS_keygen, Signer,
     };
-    use crate::secret_sharing::PedersenVSS;
+    use secret_sharing::pedersen_vss::PedersenVSS;
 
     fn check_key_aggregation(
         threshold: usize,
@@ -603,7 +620,7 @@ mod tests {
         let mut unblinded_sigs = vec![];
         for i in 0..threshold {
             let unblinded_sig = blinded_sigs.remove(0).unblind(&elg_sk);
-            assert!(unblinded_sig.verify(&msgs, &signers[i].verkey, &params));
+            assert!(unblinded_sig.verify(msgs.as_slice(), &signers[i].verkey, &params));
             unblinded_sigs.push((signers[i].id, unblinded_sig));
         }
 
@@ -617,7 +634,7 @@ mod tests {
                 .collect::<Vec<(usize, &Verkey)>>(),
         );
 
-        assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
+        assert!(aggr_sig.verify(msgs.as_slice(), &aggr_vk, &params));
     }
 
     #[test]
@@ -788,7 +805,7 @@ mod tests {
         for i in &signer_ids {
             let unblinded_sig = blinded_sigs.remove(0).unblind(&elg_sk);
             // Keys at index i have id i+1
-            assert!(unblinded_sig.verify(&msgs, &signers[*i - 1].verkey, &params));
+            assert!(unblinded_sig.verify(msgs.as_slice(), &signers[*i - 1].verkey, &params));
             unblinded_sigs.push((signers[*i - 1].id, unblinded_sig));
         }
 
@@ -801,6 +818,6 @@ mod tests {
 
         let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 
-        assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
+        assert!(aggr_sig.verify(msgs.as_slice(), &aggr_vk, &params));
     }
 }

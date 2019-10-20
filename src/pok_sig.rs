@@ -4,36 +4,12 @@ use crate::signature::{Params, Signature, Verkey};
 use crate::{OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::group_elem::GroupElement;
 use ps_sig::keys::Params as PSParams;
-use ps_sig::keys::Verkey as PSVerkey;
-use ps_sig::signature::Signature as PSSignature;
-
-// Transform the verkey to Verkey struct of ps_sig crate so that it can be used in the proof of knowledge protocol (PoKOfSignature).
-pub fn transform_to_PS_verkey(vk: &Verkey, params: &Params) -> (PSVerkey, PSParams) {
-    (
-        PSVerkey {
-            X_tilde: vk.X_tilde.clone(),
-            Y_tilde: vk.Y_tilde.clone(),
-        },
-        PSParams {
-            g: params.g.clone(),
-            g_tilde: params.g_tilde.clone(),
-        }
-    )
-}
-
-// Transform the signature to Signature struct of ps_sig crate so that it can be used in the proof of knowledge protocol (PoKOfSignature).
-pub fn transform_to_PS_sig(sig: &Signature) -> PSSignature {
-    PSSignature {
-        sigma_1: sig.sigma_1.clone(),
-        sigma_2: sig.sigma_2.clone(),
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::keygen::trusted_party_SSS_keygen;
-    use crate::signature::{BlindSignature, SignatureRequest, SignatureRequestPoK};
+    use crate::signature::{BlindSignature, SignatureRequest, SignatureRequestPoK, transform_to_PS_params, transform_to_PS_verkey, transform_to_PS_sig};
     use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
     use ps_sig::pok_sig::PoKOfSignature;
     use std::collections::{HashMap, HashSet};
@@ -94,9 +70,11 @@ mod tests {
                 .collect::<Vec<(usize, &Verkey)>>(),
         );
 
-        assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
+        assert!(aggr_sig.verify(msgs.as_slice(), &aggr_vk, &params));
 
-        let (ps_verkey, ps_params) = transform_to_PS_verkey(&aggr_vk, &params);
+        let ps_params = transform_to_PS_params(&params);
+        let ps_verkey = transform_to_PS_verkey(&aggr_vk);
+
         let ps_sig = transform_to_PS_sig(&aggr_sig);
 
         // Reveal the following messages to the verifier
