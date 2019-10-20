@@ -3,18 +3,22 @@
 use crate::signature::{Params, Signature, Verkey};
 use crate::{OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::group_elem::GroupElement;
+use ps_sig::keys::Params as PSParams;
 use ps_sig::keys::Verkey as PSVerkey;
 use ps_sig::signature::Signature as PSSignature;
 
 // Transform the verkey to Verkey struct of ps_sig crate so that it can be used in the proof of knowledge protocol (PoKOfSignature).
-pub fn transform_to_PS_verkey(vk: &Verkey, params: &Params) -> PSVerkey {
-    PSVerkey {
-        g: params.g1.clone(),
-        g_tilde: params.g2.clone(),
-        X_tilde: vk.X_tilde.clone(),
-        Y: vec![SignatureGroup::new(); vk.Y_tilde.len()],
-        Y_tilde: vk.Y_tilde.clone(),
-    }
+pub fn transform_to_PS_verkey(vk: &Verkey, params: &Params) -> (PSVerkey, PSParams) {
+    (
+        PSVerkey {
+            X_tilde: vk.X_tilde.clone(),
+            Y_tilde: vk.Y_tilde.clone(),
+        },
+        PSParams {
+            g: params.g.clone(),
+            g_tilde: params.g_tilde.clone(),
+        }
+    )
 }
 
 // Transform the signature to Signature struct of ps_sig crate so that it can be used in the proof of knowledge protocol (PoKOfSignature).
@@ -45,7 +49,7 @@ mod tests {
         let (_, _, signers) = trusted_party_SSS_keygen(threshold, total, &params);
 
         let msgs = FieldElementVector::random(msg_count);
-        let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
+        let (elg_sk, elg_pk) = elgamal_keygen!(&params.g);
         let (sig_req, randomness) = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
 
         // Initiate proof of knowledge of various items of Signature request
@@ -92,7 +96,7 @@ mod tests {
 
         assert!(aggr_sig.verify(&msgs, &aggr_vk, &params));
 
-        let ps_verkey = transform_to_PS_verkey(&aggr_vk, &params);
+        let (ps_verkey, ps_params) = transform_to_PS_verkey(&aggr_vk, &params);
         let ps_sig = transform_to_PS_sig(&aggr_sig);
 
         // Reveal the following messages to the verifier
@@ -103,7 +107,9 @@ mod tests {
         let pok = PoKOfSignature::init(
             &ps_sig,
             &ps_verkey,
+                &ps_params,
             msgs.as_slice(),
+            None,
             revealed_msg_indices.clone(),
         )
         .unwrap();
@@ -117,7 +123,7 @@ mod tests {
         }
 
         assert!(proof
-            .verify(&ps_verkey, revealed_msgs.clone(), &chal)
+            .verify(&ps_verkey, &ps_params, revealed_msgs.clone(), &chal)
             .unwrap());
     }
 }

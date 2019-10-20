@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
-#[cfg(all(feature = "G1G2", feature = "G2G1"))]
-compile_error!("features `G1G2` and `G2G1` are mutually exclusive");
+#[cfg(all(feature = "SignatureG1", feature = "SignatureG2"))]
+compile_error!("features `SignatureG1` and `SignatureG2` are mutually exclusive");
 
 #[macro_use]
 extern crate amcl_wrapper;

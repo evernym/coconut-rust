@@ -8,8 +8,8 @@ use std::collections::HashSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Params {
-    pub g1: SignatureGroup,
-    pub g2: OtherGroup,
+    pub g: SignatureGroup,
+    pub g_tilde: OtherGroup,
     pub h: SignatureGroupVec,
 }
 
@@ -17,15 +17,15 @@ impl Params {
     /// Generate g1, g2 and 1 h for each message. These are shared by all signers and users.
     /// "Setup" from paper.
     pub fn new(msg_count: usize, label: &[u8]) -> Self {
-        let g1 = SignatureGroup::from_msg_hash(&[label, " : g1".as_bytes()].concat());
-        let g2 = OtherGroup::from_msg_hash(&[label, " : g2".as_bytes()].concat());
+        let g = SignatureGroup::from_msg_hash(&[label, " : g".as_bytes()].concat());
+        let g_tilde = OtherGroup::from_msg_hash(&[label, " : g_tilde".as_bytes()].concat());
         let mut h = SignatureGroupVec::with_capacity(msg_count);
         for i in 0..msg_count {
             h.push(SignatureGroup::from_msg_hash(
                 &[label, " : y".as_bytes(), i.to_string().as_bytes()].concat(),
             ));
         }
-        Self { g1, g2, h }
+        Self { g, g_tilde, h }
     }
 
     pub fn msg_count(&self) -> usize {
@@ -116,7 +116,7 @@ impl SignatureRequest {
             .map(|g| g.clone())
             .collect::<Vec<SignatureGroup>>()
             .into();
-        bases.push(params.g1.clone());
+        bases.push(params.g.clone());
         let mut exponents: FieldElementVector = messages
             .iter()
             .take(count_hidden)
@@ -144,7 +144,7 @@ impl SignatureRequest {
                 .iter()
                 .take(count_hidden)
                 .map(|m| {
-                    let (c1, c2, k) = elgamal_encrypt!(&params.g1, elgamal_pubkey, &(&h * m));
+                    let (c1, c2, k) = elgamal_encrypt!(&params.g, elgamal_pubkey, &(&h * m));
                     randomness.push(k);
                     (c1, c2)
                 })
@@ -197,7 +197,7 @@ impl SignatureRequestPoK {
 
         // For knowledge of Elgamal secret key
         let mut committing_elgamal_sk = ProverCommittingSignatureGroup::new();
-        committing_elgamal_sk.commit(&params.g1, None);
+        committing_elgamal_sk.commit(&params.g, None);
         let committed_elgamal_sk = committing_elgamal_sk.finish();
 
         // For knowledge of hidden messages and randomness in the commitment
@@ -210,7 +210,7 @@ impl SignatureRequestPoK {
             hidden_msg_blindings.push(b);
         }
         // For randomness
-        committing_comm.commit(&params.g1, None);
+        committing_comm.commit(&params.g, None);
         let committed_comm = committing_comm.finish();
 
         let ciphertext_commts = if sig_req.ciphertexts.len() > 0 {
@@ -220,7 +220,7 @@ impl SignatureRequestPoK {
             let mut ciphertext_commts = vec![];
             for i in 0..sig_req.ciphertexts.len() {
                 let mut committing_1 = ProverCommittingSignatureGroup::new();
-                committing_1.commit(&params.g1, None);
+                committing_1.commit(&params.g, None);
 
                 let mut committing_2 = ProverCommittingSignatureGroup::new();
                 committing_2.commit(elgamal_pk, None);
@@ -309,7 +309,7 @@ impl SignatureRequestProof {
         // Verify proof of knowledge of Elgamal secret key
         if !self
             .proof_elgamal_sk
-            .verify(&[params.g1.clone()], elgamal_pk, challenge)?
+            .verify(&[params.g.clone()], elgamal_pk, challenge)?
         {
             return Ok(false);
         }
@@ -321,7 +321,7 @@ impl SignatureRequestProof {
             .take(sig_req.ciphertexts.len())
             .map(|h| h.clone())
             .collect::<Vec<SignatureGroup>>();
-        bases.push(params.g1.clone());
+        bases.push(params.g.clone());
         if !self
             .proof_commitment
             .verify(&bases, &sig_req.commitment, challenge)?
@@ -338,7 +338,7 @@ impl SignatureRequestProof {
                 return Ok(false);
             }
 
-            if !proof_1.verify(&[params.g1.clone()], &sig_req.ciphertexts[i].0, challenge)? {
+            if !proof_1.verify(&[params.g.clone()], &sig_req.ciphertexts[i].0, challenge)? {
                 return Ok(false);
             }
             if !proof_2.verify(&bases, &sig_req.ciphertexts[i].1, challenge)? {
@@ -456,7 +456,7 @@ impl Signature {
         // Y_m = X_tilde * Y_tilde[1]^m_1 * Y_tilde[2]^m_2 * ...Y_tilde[i]^m_i
         let Y_m = &vk.X_tilde + &(Y_m_bases.multi_scalar_mul_var_time(&Y_m_exps).unwrap());
         // e(sigma_1, Y_m) == e(sigma_2, g2) => e(sigma_1, Y_m) * e(-sigma_2, g2) == 1
-        let e = ate_2_pairing(&self.sigma_1, &Y_m, &(self.sigma_2.negation()), &params.g2);
+        let e = ate_2_pairing(&self.sigma_1, &Y_m, &(self.sigma_2.negation()), &params.g_tilde);
         e.is_one()
     }
 }
@@ -534,11 +534,11 @@ mod tests {
                 .collect::<Vec<(usize, &Verkey)>>(),
         );
 
-        let expected_X_tilde = &params.g2 * &secret_x;
+        let expected_X_tilde = &params.g_tilde * &secret_x;
         assert_eq!(expected_X_tilde, aggr_vk.X_tilde);
 
         for i in 0..msg_count {
-            let expected_Y_tilde_i = &params.g2 * &secret_y[i];
+            let expected_Y_tilde_i = &params.g_tilde * &secret_y[i];
             assert_eq!(expected_Y_tilde_i, aggr_vk.Y_tilde[i]);
         }
     }
@@ -553,11 +553,11 @@ mod tests {
     ) {
         let aggr_vk = Verkey::aggregate(threshold, keys_to_aggr);
 
-        let expected_X_tilde = &params.g2 * &secret_x;
+        let expected_X_tilde = &params.g_tilde * &secret_x;
         assert_eq!(expected_X_tilde, aggr_vk.X_tilde);
 
         for i in 0..msg_count {
-            let expected_Y_tilde_i = &params.g2 * &secret_y[i];
+            let expected_Y_tilde_i = &params.g_tilde * &secret_y[i];
             assert_eq!(expected_Y_tilde_i, aggr_vk.Y_tilde[i]);
         }
     }
@@ -570,7 +570,7 @@ mod tests {
         params: &Params,
     ) {
         let msgs = FieldElementVector::random(msg_count);
-        let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
+        let (elg_sk, elg_pk) = elgamal_keygen!(&params.g);
 
         let (sig_req, randomness) = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
 
@@ -753,7 +753,7 @@ mod tests {
         let (_, _, signers) = trusted_party_SSS_keygen(threshold, total, &params);
 
         let msgs = FieldElementVector::random(msg_count);
-        let (elg_sk, elg_pk) = elgamal_keygen!(&params.g1);
+        let (elg_sk, elg_pk) = elgamal_keygen!(&params.g);
 
         let (sig_req, randomness) = SignatureRequest::new(&msgs, count_hidden, &elg_pk, &params);
 

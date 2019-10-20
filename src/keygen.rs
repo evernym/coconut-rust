@@ -21,12 +21,12 @@ fn keygen_from_shares(
     for i in 0..num_signers {
         let id = i + 1;
         let x_i = x_shares.remove(&id).unwrap();
-        let alpha_i = &params.g2 * &x_i;
+        let alpha_i = &params.g_tilde * &x_i;
         let mut y_i = vec![];
         let mut beta_i = vec![];
         for j in 0..params.msg_count() {
             y_i.push(y_shares[j].remove(&id).unwrap());
-            beta_i.push(&params.g2 * &y_i[j]);
+            beta_i.push(&params.g_tilde * &y_i[j]);
         }
 
         signers.push(Signer {
@@ -231,7 +231,7 @@ mod tests {
             }
         }
 
-        let expected_X_tilde = &params.g2 * &secret_x;
+        let expected_X_tilde = &params.g_tilde * &secret_x;
         assert_eq!(
             expected_X_tilde,
             recon_X_tilde_bases
@@ -240,7 +240,7 @@ mod tests {
         );
 
         for i in 0..msg_count {
-            let expected_Y_tilde_i = &params.g2 * &secret_y[i];
+            let expected_Y_tilde_i = &params.g_tilde * &secret_y[i];
             assert_eq!(
                 expected_Y_tilde_i,
                 recon_Y_tilde_bases[i]

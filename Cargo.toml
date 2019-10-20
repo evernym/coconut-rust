@@ -18,9 +18,9 @@ default-features = false
 features = ["bls381"]
 
 [dependencies.ps_sig]
-version = "0.1.1"
+version = "0.1.2"
 
 [features]
-default = ["G1G2"]
-G1G2 = []
-G2G1 = []
+default = ["SignatureG2"]
+SignatureG1 = []
+SignatureG2 = []
